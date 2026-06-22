@@ -1,0 +1,161 @@
+name: "CDC-RFA-IP-26-0102 — Influenza modeling & forecasting"
+total_points: 100
+reviewer_role: "an experienced CDC peer reviewer scoring a cooperative-agreement application"
+# gemma (Google) + qwen2.5 (Alibaba): two different families, both ~27-32B so they
+# run comfortably on a 64GB machine. The configured 70B model thrashed memory and
+# wedged Ollama; qwen3.6:27b stalled on large prompts. This pairing is verified.
+models: ["gemma3:27b", "qwen2.5:32b"]
+
+# Map a criterion's section-id prefix to the scored section it rolls up into.
+section_groups:
+  "1": "Background and approach"
+  "2": "Evaluation & performance measurement"
+  "3": "Organizational capacity"
+
+# Section subtotals as published in the NOFO scoring tables.
+section_totals:
+  "Background and approach": 45
+  "Evaluation & performance measurement": 20
+  "Organizational capacity": 35
+
+# Each criterion targets a numbered narrative section (matches the draft's numbering).
+# Use section "*" to score against the whole document instead.
+# Tip: add `stop_marker: "References"` (top level) to trim trailing matter that the
+# last numbered section would otherwise absorb.
+criteria:
+  - section: "1.1"
+    name: "Background"
+    max: 5
+    look_for: >
+      Influenza knowledge; clear problems/questions consistent with the NOFO's
+      focus on influenza modeling and forecasting.
+  - section: "1.2"
+    name: "Strategies: realism & logic-model fit"
+    max: 10
+    look_for: >
+      Realistic strategies consistent with the program logic model; analytic
+      approaches appropriate to the questions, available data, and activities.
+      Higher scores for multiple activities per covered strategy.
+  - section: "1.2"
+    name: "Strategies: coverage & hub submission"
+    max: 10
+    look_for: >
+      Addresses each of Strategies 1-3 AND at least one activity for Strategy 4 or 5.
+      Commits to submitting projections/forecasts to a collaborative hub (Flu Scenario
+      Modeling Hub or FluSight) at BOTH national and sub-national levels.
+  - section: "1.2"
+    name: "Strategies: multi-institution partners"
+    max: 5
+    look_for: >
+      Engages partners across multiple institutions with defined roles; supported by
+      letters of support or evidence of prior collaborations.
+  - section: "1.2"
+    name: "Strategies: risk & lessons-learned plan"
+    max: 5
+    look_for: >
+      Plan to identify and address potential problems, alternative strategies, and
+      benchmarks for success; documents lessons learned to improve prevention/control.
+  - section: "1.2"
+    name: "Strategies: open code/tools"
+    max: 2
+    look_for: >
+      Increases availability of/access to modeling or forecasting code and tools on
+      non-proprietary platforms (e.g., GitHub), per federal source-code policy.
+  - section: "1.3"
+    name: "Outcomes"
+    max: 3
+    look_for: "Outcomes consistent with the outcomes in the program's logic model."
+  - section: "1.4"
+    name: "Work plan"
+    max: 5
+    look_for: >
+      Feasible work plan aligned with strategies, activities, outcomes, and performance
+      measures; use of funds aligns with the plan and attains the outcomes.
+  - section: "2.1"
+    name: "Eval: data collection & monitoring"
+    max: 5
+    look_for: >
+      Ability to collect data needed for evaluation; clear monitoring/evaluation
+      procedures integrated into planning, implementing, and reporting.
+  - section: "2.2"
+    name: "Eval: reporting & use of findings"
+    max: 5
+    look_for: >
+      How findings are reported and used to demonstrate outcomes and drive continuous
+      quality improvement; feasibility of collecting the evaluation data.
+  - section: "2.3"
+    name: "Eval: public-health partner participation"
+    max: 5
+    look_for: >
+      Public-health partners participate in evaluation planning; findings shared to
+      inform influenza preparedness and response.
+  - section: "2.5"
+    name: "Eval: data management plan"
+    max: 3
+    look_for: >
+      Data management plan covering data generated/collected, access, standards,
+      archiving, collection methods, and limitations; updated throughout the award.
+  - section: "2.4"
+    name: "Eval: performance measures"
+    max: 2
+    look_for: >
+      Process/outcome measures, key evaluation questions, and data sources that
+      contribute to the evidence base for prevention and control.
+  - section: "3.1"
+    name: "Capacity: influenza & methodological expertise"
+    max: 10
+    look_for: >
+      Technical expertise in influenza dynamics (transmission, immunity) and/or
+      methodological expertise appropriate for modeling/forecasting.
+  - section: "3.2"
+    name: "Capacity: end-to-end modeling capability"
+    max: 5
+    look_for: >
+      Capacity to define questions, generate hypotheses, search literature, determine
+      data inputs, build models individually and collaboratively, disseminate, evaluate;
+      sufficient experience, personnel, and resources for feasibility.
+  - section: "3.3"
+    name: "Capacity: forecasting track record & national coverage"
+    max: 10
+    look_for: >
+      Demonstrated ability to produce real-time forecasts/scenario projections for ALL
+      50 states and the U.S., contributing to FluSight or the Flu Scenario Modeling Hub.
+      Higher scores for national+subnational examples and many seasons (e.g., >3 FluSight).
+  - section: "3.4"
+    name: "Capacity: project management & administration"
+    max: 3
+    look_for: >
+      Relevant project management/administrative expertise for a federal cooperative
+      agreement; organizational chart with clearly defined roles.
+  - section: "3.5"
+    name: "Capacity: institutional & computational resources"
+    max: 2
+    look_for: "Sufficient institutional support, equipment, and computational resources."
+  - section: "3.6"
+    name: "Capacity: past public-health collaborations"
+    max: 5
+    look_for: >
+      Past collaborations with academic/federal/jurisdictional public-health partners
+      (length, type, results); at least one letter of support from a public-health partner.
+
+keywords:
+  - {pattern: "strategy 1", category: "Strategy coverage"}
+  - {pattern: "strategy 2", category: "Strategy coverage"}
+  - {pattern: "strategy 3", category: "Strategy coverage"}
+  - {pattern: "strategy 4", category: "Strategy coverage"}
+  - {pattern: "strategy 5", category: "Strategy coverage"}
+  - {pattern: "flusight", category: "Hub submission"}
+  - {pattern: "flu scenario modeling hub|scenario modeling hub", category: "Hub submission", label: "Flu Scenario Modeling Hub"}
+  - {pattern: "sub.?national", category: "Hub submission", label: "subnational"}
+  - {pattern: "all 50 states|50 states", category: "National coverage", label: "all 50 states"}
+  - {pattern: "real.?time forecast|scenario projection", category: "National coverage", label: "real-time forecast / scenario projection"}
+  - {pattern: "logic model", category: "Alignment"}
+  - {pattern: "work ?plan", category: "Alignment", label: "work plan"}
+  - {pattern: "github|non.?proprietary|open.?source|source.code policy", category: "Open code (2 pts)", label: "open / non-proprietary code"}
+  - {pattern: "letter of support", category: "Partnerships"}
+  - {pattern: "jurisdictional", category: "Partnerships"}
+  - {pattern: "public health partner", category: "Partnerships"}
+  - {pattern: "data management plan", category: "Evaluation"}
+  - {pattern: "performance measure", category: "Evaluation"}
+  - {pattern: "transmission|immunity", category: "Influenza expertise", label: "transmission / immunity"}
+  - {pattern: "uncertainty|calibrat", category: "Methodology depth", label: "uncertainty / calibration"}

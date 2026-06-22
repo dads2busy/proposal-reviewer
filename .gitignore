@@ -1,0 +1,13 @@
+# Generated reports live next to each proposal, not here; ignore any that land in-repo
+compliance_report_*.md
+compliance_report_*.html
+compliance_report_*.pdf
+__pycache__/
+*.pyc
+.env
+.DS_Store
+
+# Claude Code: commit CLAUDE.md and .claude/rules/; keep personal layers out of version control
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

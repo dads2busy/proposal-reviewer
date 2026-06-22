@@ -1,0 +1,72 @@
+# Example config retrofitting the DoE_Genesis_16A review onto the shared engine.
+# The original assess_compliance.py scored the WHOLE document against each review
+# criterion (no section-splitting), so every criterion here uses section "*".
+# DOE's official scheme was percentage-based; the point caps below are an
+# even-weighted approximation (4 criteria x 25 = 100). Adjust to taste.
+
+name: "DOE DE-FOA-0003612 — Genesis 16A (Grid Modeling & Analysis)"
+total_points: 100
+reviewer_role: "an expert reviewer assessing a DOE proposal for Focus Area 16A (Grid Modeling and Analysis)"
+models: ["llama3.3:70b", "qwen3.6:27b"]
+
+# Match the original extractor, which stopped at the reference-copy marker.
+stop_marker: "REFERENCE COPY OF ORIGINAL DOCUMENT"
+
+# Optional: shared RFA context appended to every criterion prompt.
+rfa_context: >
+  Focus Area 16A seeks a foundational, self-improving power-system model and AI-driven
+  copilot/agentic tools that reduce uncertainty and speed decision-making, with rigorous
+  statistical characterization of uncertainties, an electricity-sector team member with
+  real data, a demonstration component (>=20% of effort), and 20% cost share.
+
+# Whole-document criteria → all share group "Review criteria".
+section_groups: {}
+section_totals:
+  "Review criteria": 100
+
+criteria:
+  - section: "*"
+    group: "Review criteria"
+    name: "Criterion 1 — Scientific/Technical Merit"
+    max: 25
+    look_for: >
+      AI advantage demonstrated; technical readiness level stated; key performance
+      indicators; alignment with the 16A focus-area objectives.
+  - section: "*"
+    group: "Review criteria"
+    name: "Criterion 2 — Technical Approach"
+    max: 25
+    look_for: >
+      Innovative concepts/methods; sound, detailed methodology; risks with mitigation;
+      clear milestone timeline; scalability; testing/validation; environmental impact and safety.
+  - section: "*"
+    group: "Review criteria"
+    name: "Criterion 3 — Team, Resources, Management"
+    max: 25
+    look_for: >
+      Well-qualified, interdisciplinary team; clear collaboration across institutions;
+      adequate facilities and computational resources; credible management plan.
+  - section: "*"
+    group: "Review criteria"
+    name: "Criterion 4 — Commercialization Potential"
+    max: 25
+    look_for: >
+      Technology-transfer strategy; techno-economic analysis; industry-adoption potential
+      and barriers to adoption.
+
+keywords:
+  - {pattern: "foundational.*model", category: "16A Priority (i)", label: "foundational model"}
+  - {pattern: "self.?improvement", category: "16A Priority (i)", label: "self-improvement"}
+  - {pattern: "agentic interface|copilot", category: "16A Priority (ii)", label: "agentic / copilot"}
+  - {pattern: "rigorous statistical characterization", category: "16A Requirements"}
+  - {pattern: "stochasticity.*dynamic loads", category: "16A Requirements", label: "stochasticity / dynamic loads"}
+  - {pattern: "cost.?share", category: "16A Requirements", label: "cost share"}
+  - {pattern: "demonstration component|demonstration", category: "16A Requirements", label: "demonstration component"}
+  - {pattern: "technical readiness level|trl", category: "Criterion 1", label: "TRL"}
+  - {pattern: "key performance indicator|kpi", category: "Criterion 1", label: "KPI"}
+  - {pattern: "scalab", category: "Criterion 2", label: "scalability"}
+  - {pattern: "testing and validation", category: "Criterion 2"}
+  - {pattern: "risk.*mitigation", category: "Criterion 2", label: "risk mitigation"}
+  - {pattern: "techno.?economic", category: "Criterion 4", label: "techno-economic"}
+  - {pattern: "technology transfer", category: "Criterion 4"}
+  - {pattern: "commercializ", category: "Criterion 4", label: "commercialization"}

@@ -1,0 +1,59 @@
+# proposal-reviewer
+
+Offline, config-driven compliance review for grant proposals. Runs a two-model
+**local** ensemble (via [Ollama](https://ollama.com)) plus a deterministic keyword
+pass against a proposal, scores it against a rubric defined in a YAML config, and
+merges everything into a combined report (`.md` / `.html` / `.pdf`).
+
+Nothing leaves the machine and it consumes no cloud/API usage — the whole point is
+to run proposal reviews locally and repeatedly while you iterate on a draft.
+
+## Why config-driven
+
+The engine (`proposal_reviewer.py`) is proposal-agnostic. Everything specific to a
+given funding opportunity — criteria, point caps, section map, keywords, model
+picks — lives in a YAML file under `configs/`. One engine, one config per proposal.
+
+## Install
+
+    brew install ollama pandoc          # pdftotext comes via poppler: brew install poppler
+    pip install pyyaml
+    ollama pull llama3.3:70b
+    ollama pull qwen3.6:27b
+    # PDF rendering needs one of:
+    brew install --cask wkhtmltopdf     # or: pip install weasyprint
+
+Requires Ollama >= 0.19 (MLX backend on Apple Silicon).
+
+## Use
+
+    # Validate a config against a proposal without running models:
+    python proposal_reviewer.py PROPOSAL --config configs/cdc-ip-26-0102.yaml --dry-run
+
+    # Full review:
+    python proposal_reviewer.py PROPOSAL --config configs/cdc-ip-26-0102.yaml
+
+    # Override models ad hoc:
+    python proposal_reviewer.py PROPOSAL --config CONFIG --models llama3.3:70b qwen3.6:27b
+
+`PROPOSAL` can be `.docx`, `.pdf`, `.md`, `.tex`, or `.txt`. Reports are written
+next to the proposal file.
+
+## Writing a config
+
+See `configs/cdc-ip-26-0102.yaml` (section-targeted scoring) and
+`configs/doe-genesis-16a.yaml` (whole-document scoring) for the two patterns.
+
+Each criterion targets a numbered narrative section (e.g. `section: "1.2"`) or the
+whole document (`section: "*"`). The model awards `0..max` points per criterion;
+section subtotals roll up via `section_groups` / `section_totals`. The `keywords`
+list is a deterministic regex scan for exact, checkable requirements that models
+sometimes gloss (specific platforms, named hubs, required attachments).
+
+## Output
+
+- `compliance_report_<model>.md` — one per model
+- `compliance_report_keywords.md` — deterministic phrase coverage
+- `compliance_report_combined.md` / `.html` / `.pdf` — merged: per-section scores
+  per model, per-criterion divergence flags, gaps where both models converge,
+  shared strengths, and missing-phrase scan
