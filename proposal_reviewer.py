@@ -381,15 +381,24 @@ def render(md_path: Path):
     html = md_path.with_suffix(".html")
     subprocess.run(["pandoc", str(md_path), "-s", "-o", str(html)], check=False)
     pdf = md_path.with_suffix(".pdf")
-    for eng in ("wkhtmltopdf", "weasyprint", "tectonic", "pdflatex"):
+    # The report uses Unicode (★ ≥ ✓ ✗ • —), so pdflatex (Latin Modern) mangles it.
+    # wkhtmltopdf/weasyprint render from HTML/CSS and handle Unicode natively; the
+    # fontspec TeX engines (xelatex/lualatex) need a Unicode main font. Each attempt
+    # that errors (engine absent, or font absent) returns non-zero and we fall through.
+    unicode_font = "Arial Unicode MS"  # broad coverage on macOS
+    attempts = [("wkhtmltopdf", []), ("weasyprint", []),
+                ("xelatex", ["-V", f"mainfont={unicode_font}"]),
+                ("lualatex", ["-V", f"mainfont={unicode_font}"]),
+                ("tectonic", []), ("pdflatex", [])]
+    for eng, extra in attempts:
         try:
-            r = subprocess.run(["pandoc", str(md_path), f"--pdf-engine={eng}", "-o", str(pdf)],
+            r = subprocess.run(["pandoc", str(md_path), f"--pdf-engine={eng}", *extra, "-o", str(pdf)],
                                capture_output=True, text=True)
             if r.returncode == 0:
                 return f"{html.name}, {pdf.name}"
         except FileNotFoundError:
             continue
-    return f"{html.name} (no PDF engine found — install wkhtmltopdf or weasyprint)"
+    return f"{html.name} (no PDF engine found — install weasyprint or a Unicode TeX (xelatex))"
 
 
 def dry_run(cfg, sections, full_text):

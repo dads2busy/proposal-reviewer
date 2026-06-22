@@ -18,10 +18,10 @@ picks — lives in a YAML file under `configs/`. One engine, one config per prop
 
     brew install ollama pandoc          # pdftotext comes via poppler: brew install poppler
     pip install pyyaml
-    ollama pull llama3.3:70b
-    ollama pull qwen3.6:27b
-    # PDF rendering needs one of:
-    brew install --cask wkhtmltopdf     # or: pip install weasyprint
+    ollama pull gemma3:27b              # two DIFFERENT families; both ~27-32B run
+    ollama pull qwen2.5:32b             # comfortably on a 64GB machine
+    # PDF rendering needs a Unicode-capable engine, one of:
+    pip install weasyprint              # or a TeX with xelatex (brew install --cask mactex-no-gui)
 
 Requires Ollama >= 0.19 (MLX backend on Apple Silicon).
 
