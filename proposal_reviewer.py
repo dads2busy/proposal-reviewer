@@ -192,6 +192,29 @@ def is_missing_result(res):
     return any(m in blob for m in MISSING_MARKERS)
 
 
+def build_recommendation_digest(cfg, models, all_results):
+    """Per-criterion candidates for recommendations: items where BOTH models docked
+    points (same selection rule as §3/§4). Order follows cfg['criteria']."""
+    A, B = models
+    ra, rb = all_results[A], all_results[B]
+    digest = []
+    for crit, a, b in zip(cfg["criteria"], ra, rb):
+        mx = crit["max"]
+        if a["awarded"] < mx and b["awarded"] < mx:
+            missing = is_missing_result(a) or is_missing_result(b)
+            digest.append({
+                "section": str(crit.get("section", "")),
+                "name": crit["name"],
+                "max": mx,
+                "awarded": [a["awarded"], b["awarded"]],
+                "points_at_stake": (mx - a["awarded"]) + (mx - b["awarded"]),
+                "gaps": (a.get("gaps") or []) + (b.get("gaps") or []),
+                "required": is_required_criterion(crit) or missing,
+                "missing": missing,
+            })
+    return digest
+
+
 # ── combine ─────────────────────────────────────────────────────────
 def section_subtotals(cfg, results):
     groups = {}
