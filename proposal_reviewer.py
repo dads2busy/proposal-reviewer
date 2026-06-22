@@ -215,6 +215,83 @@ def build_recommendation_digest(cfg, models, all_results):
     return digest
 
 
+SYNTH_SYSTEM = (
+    "You are {role}. You are given the gaps two independent reviewers found in a grant "
+    "proposal, each with the points at stake. Produce the TOP {n} most important "
+    "recommendations to improve the proposal. MERGE related or duplicate gaps from the two "
+    "reviewers into a single recommendation. Rank by importance: points at stake is the "
+    "primary signal, but a missing REQUIRED element (data management plan, letters of "
+    "support, organizational chart) or a hard compliance miss may outrank a higher-point "
+    "soft gap. Return FEWER than {n} items if there are fewer real gaps. "
+    'Respond ONLY with a JSON array; each item: {{"title": <str>, "points_at_stake": <int>, '
+    '"criteria": [<str>], "do": <str>, "why": <str>}}'
+)
+
+
+def _ollama_chat(model, system_prompt, user_prompt, timeout=900):
+    """Single local Ollama chat call; returns the message content string."""
+    payload = {"model": model, "temperature": 0.2,
+               "messages": [{"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}],
+               "options": {"num_ctx": 16384}}
+    req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())["choices"][0]["message"]["content"]
+
+
+def _digest_to_prompt(digest):
+    lines = []
+    for d in digest:
+        flag = "  [REQUIRED/MISSING]" if d["required"] else ""
+        lines.append(f"- {d['name']} (§{d['section']}) — {d['points_at_stake']} pts at stake{flag}")
+        for g in d["gaps"]:
+            lines.append(f"    • {g}")
+    return "\n".join(lines)
+
+
+def deterministic_recommendations(digest, n):
+    """Fallback ranking when the synthesis model is unavailable or returns garbage.
+    Sort by (required, points_at_stake) descending."""
+    ordered = sorted(digest, key=lambda d: (d["required"], d["points_at_stake"]), reverse=True)
+    recs = []
+    for d in ordered[:n]:
+        why = ("Section is missing or placeholder; both reviewers scored it near zero."
+               if d["missing"] else "Both reviewers docked points here.")
+        recs.append({
+            "title": d["name"],
+            "points_at_stake": d["points_at_stake"],
+            "criteria": [f"§{d['section']}"] if d["section"] else [],
+            "do": d["gaps"][0] if d["gaps"] else "Address the reviewers' gaps for this criterion.",
+            "why": why,
+        })
+    return recs
+
+
+def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
+    """Ranked, deduplicated recommendations merging both models' gaps. Falls back to a
+    deterministic ranking if the synthesis call fails or returns unusable output."""
+    digest = build_recommendation_digest(cfg, models, all_results)
+    if not digest:
+        return []
+    n = int(cfg.get("top_recommendations", 7))
+    model = cfg.get("synthesis_model") or models[0]
+    role = cfg.get("reviewer_role", DEFAULT_ROLE)
+    system = SYNTH_SYSTEM.format(role=role, n=n)
+    user = ("CRITERIA WITH GAPS (ranked candidates):\n" + _digest_to_prompt(digest)
+            + f"\n\nReturn the top {n} merged recommendations as a JSON array.")
+    try:
+        content = chat_fn(model, system, user)
+        cleaned = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
+        recs = json.loads(cleaned)
+        if not isinstance(recs, list) or not recs:
+            raise ValueError("empty or non-list synthesis output")
+        return recs[:n]
+    except Exception as e:
+        print(f"  synthesis failed ({e}); using deterministic ranking", file=sys.stderr)
+        return deterministic_recommendations(digest, n)
+
+
 # ── combine ─────────────────────────────────────────────────────────
 def section_subtotals(cfg, results):
     groups = {}

@@ -85,5 +85,62 @@ class TestDigest(unittest.TestCase):
         self.assertEqual(set(bg["gaps"]), {"entirely placeholder text", "no content provided"})
 
 
+from proposal_reviewer import synthesize_recommendations, deterministic_recommendations
+
+
+class TestSynthesis(unittest.TestCase):
+    def test_uses_model_output_when_valid(self):
+        cfg, models, results = _sample_cfg_and_results()
+        fake = lambda m, s, u: (
+            '[{"title":"Write Background","points_at_stake":10,'
+            '"criteria":["§1.1"],"do":"Add the section","why":"empty"}]')
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=fake)
+        self.assertEqual(recs[0]["title"], "Write Background")
+
+    def test_strips_code_fences(self):
+        cfg, models, results = _sample_cfg_and_results()
+        fake = lambda m, s, u: '```json\n[{"title":"X","points_at_stake":1,"criteria":[],"do":"d","why":"w"}]\n```'
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=fake)
+        self.assertEqual(recs[0]["title"], "X")
+
+    def test_respects_top_n(self):
+        cfg, models, results = _sample_cfg_and_results()
+        cfg["top_recommendations"] = 1
+        fake = lambda m, s, u: (
+            '[{"title":"a","points_at_stake":10,"criteria":[],"do":"x","why":"y"},'
+            '{"title":"b","points_at_stake":5,"criteria":[],"do":"x","why":"y"}]')
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=fake)
+        self.assertEqual(len(recs), 1)
+
+    def test_falls_back_on_exception(self):
+        cfg, models, results = _sample_cfg_and_results()
+        def boom(m, s, u):
+            raise TimeoutError("timed out")
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=boom)
+        self.assertTrue(recs)  # deterministic list, non-empty
+        # required/missing items rank first; Background & DMP both qualify
+        self.assertIn(recs[0]["title"], ("Background", "Eval: data management plan"))
+
+    def test_falls_back_on_garbage(self):
+        cfg, models, results = _sample_cfg_and_results()
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=lambda m, s, u: "not json at all")
+        self.assertTrue(recs)
+        self.assertIn("points_at_stake", recs[0])
+
+    def test_empty_when_no_gaps(self):
+        cfg = {"criteria": [{"section": "1", "name": "x", "max": 5, "look_for": ""}]}
+        results = {"m1": [{"awarded": 5, "gaps": []}], "m2": [{"awarded": 5, "gaps": []}]}
+        recs = synthesize_recommendations(cfg, ["m1", "m2"], results, chat_fn=lambda *a: "[]")
+        self.assertEqual(recs, [])
+
+    def test_deterministic_orders_required_first(self):
+        cfg, models, results = _sample_cfg_and_results()
+        from proposal_reviewer import build_recommendation_digest
+        digest = build_recommendation_digest(cfg, models, results)
+        recs = deterministic_recommendations(digest, 7)
+        # Background (10 pts, required) before DMP (6 pts, required)
+        self.assertEqual(recs[0]["title"], "Background")
+
+
 if __name__ == "__main__":
     unittest.main()
