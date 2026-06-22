@@ -13,7 +13,7 @@
 - **Offline only:** all model calls go to the local Ollama endpoint `OLLAMA_URL` (`http://localhost:11434/v1/chat/completions`). No cloud/API calls — ever.
 - **Stdlib-only except PyYAML:** do not add dependencies. Tests use `unittest`, NOT pytest.
 - **Exactly two reviewer models:** the synthesis step REUSES one configured model; it is not a third reviewer and must not change the two reviewer passes or the combine step's two-model assumption.
-- **Not a git repo:** this project is not under version control. Each task's final step is a **checkpoint** that runs the full test suite (no `git commit`). If the user wants versioning, that's a separate decision.
+- **Git repo:** the project is under git on the `main` branch. Each task's final step is a **checkpoint**: run the full test suite, then commit the task's changes with a descriptive message ending in the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
 - **All edits in `proposal_reviewer.py`** (engine) plus new `tests/` and doc updates. Adding a proposal/config must never require engine edits — but adding this *engine feature* legitimately does.
 - **Test run command (from repo root):** `python3 -m unittest tests.test_recommendations -v`
 
@@ -127,7 +127,7 @@ Expected: PASS (7 tests in `TestDetectionHelpers`)
 
 - [ ] **Step 6: Checkpoint**
 
-Run the full suite: `python3 -m unittest tests.test_recommendations -v` — all green. (No git commit; repo is not version-controlled.)
+Run the full suite: `python3 -m unittest tests.test_recommendations -v` — all green, then `git add -A && git commit` the task's changes.
 
 ---
 
