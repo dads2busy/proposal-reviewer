@@ -320,7 +320,7 @@ def section_subtotals(cfg, results):
     return groups
 
 
-def build_combined(cfg, models, all_results, kw_pct, kw_missing):
+def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs):
     A, B = models
     ra, rb = all_results[A], all_results[B]
     ga, gb = section_subtotals(cfg, ra), section_subtotals(cfg, rb)
@@ -336,7 +336,9 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing):
     L.append(f"| RFA Keyword Coverage | {kw_pct:.0f}% | {kw_pct:.0f}% |")
     L.append(f"| **TOTAL** | **{ta}/{total}** | **{tb}/{total}** |\n")
 
-    L.append("\n## 2. Per-criterion scores (★ = models diverge ≥2 pts)\n")
+    L.append(render_recommendations(recs))
+
+    L.append("\n## 3. Per-criterion scores (★ = models diverge ≥2 pts)\n")
     L += ["| Criterion | Max | " + A + " | " + B + " |", "|---|---|---|---|"]
     for crit, x, y in zip(cfg["criteria"], ra, rb):
         flag = " ★" if abs(x["awarded"] - y["awarded"]) >= 2 else ""
@@ -348,27 +350,27 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing):
             lost = (crit["max"] - x["awarded"]) + (crit["max"] - y["awarded"])
             gaps.append((lost, crit, x, y))
     gaps.sort(key=lambda t: t[0], reverse=True)
-    L.append("\n## 3. Priority gaps — both models dock points (ranked by points at stake)\n")
+    L.append("\n## 4. Priority gaps — both models dock points (ranked by points at stake)\n")
     for lost, crit, x, y in gaps:
         L.append(f"\n### {crit['name']} — {A} {x['awarded']}/{crit['max']}, {B} {y['awarded']}/{crit['max']}  (−{lost})")
         for who, r in ((A, x), (B, y)):
             for g in r.get("gaps", []):
                 L.append(f"- _{who}:_ {g}")
 
-    L.append("\n## 4. Strengths — both models score ≥80% of max\n")
+    L.append("\n## 5. Strengths — both models score ≥80% of max\n")
     for crit, x, y in zip(cfg["criteria"], ra, rb):
         if x["awarded"] >= 0.8 * crit["max"] and y["awarded"] >= 0.8 * crit["max"]:
             strs = (x.get("strengths") or []) + (y.get("strengths") or [])
             L.append(f"- **{crit['name']}** ({x['awarded']}/{crit['max']}, {y['awarded']}/{crit['max']})"
                      + (f" — {strs[0]}" if strs else ""))
 
-    L.append("\n## 5. Missing RFA phrases (deterministic scan)\n")
+    L.append("\n## 6. Missing RFA phrases (deterministic scan)\n")
     if kw_missing:
         L += ["| Phrase | Category |", "|---|---|"] + [f"| {l} | {c} |" for l, c in kw_missing]
     else:
         L.append("None — all tracked phrases present.")
 
-    L.append(f"\n## 6. Final\n**{A}: {ta}/{total} · {B}: {tb}/{total} · Keywords: {kw_pct:.0f}%**\n")
+    L.append(f"\n## 7. Final\n**{A}: {ta}/{total} · {B}: {tb}/{total} · Keywords: {kw_pct:.0f}%**\n")
     if gaps:
         L.append("Remaining work, by points at stake: "
                  + ", ".join(f"{c['name']} (−{lost})" for lost, c, *_ in gaps[:5]) + ".")
@@ -440,7 +442,9 @@ def main():
     kw_text, kw_pct, kw_missing = keyword_scan(full_text, cfg.get("keywords", []))
     (outdir / "compliance_report_keywords.md").write_text(kw_text)
 
-    combined = build_combined(cfg, models, all_results, kw_pct, kw_missing)
+    print("Synthesizing recommendations ...", file=sys.stderr)
+    recs = synthesize_recommendations(cfg, models, all_results)
+    combined = build_combined(cfg, models, all_results, kw_pct, kw_missing, recs)
     cpath = outdir / "compliance_report_combined.md"
     cpath.write_text(combined)
     rendered = render(cpath)

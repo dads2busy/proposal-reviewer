@@ -168,5 +168,36 @@ class TestRender(unittest.TestCase):
         self.assertIn("No material gaps", md)
 
 
+from proposal_reviewer import build_combined
+
+
+class TestBuildCombinedIntegration(unittest.TestCase):
+    def _cfg_results_recs(self):
+        cfg = {"name": "T", "total_points": 5,
+               "criteria": [{"section": "1.1", "name": "Background", "max": 5,
+                             "look_for": "x", "group": "G"}],
+               "section_groups": {"1": "G"}, "section_totals": {"G": 5}}
+        A, B = "m1", "m2"
+        results = {
+            A: [{"awarded": 0, "max": 5, "strengths": [], "gaps": ["placeholder"]}],
+            B: [{"awarded": 0, "max": 5, "strengths": [], "gaps": ["empty"]}],
+        }
+        recs = [{"title": "Fix Background", "points_at_stake": 10,
+                 "criteria": ["§1.1"], "do": "Write it", "why": "empty"}]
+        return cfg, [A, B], results, recs
+
+    def test_recommendations_section_is_second(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        md = build_combined(cfg, models, results, 100.0, [], recs)
+        self.assertLess(md.index("## 2. Top recommendations"),
+                        md.index("## 3. Per-criterion"))
+
+    def test_renders_recommendation_and_renumbered_final(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        md = build_combined(cfg, models, results, 100.0, [], recs)
+        self.assertIn("### 1. Fix Background", md)
+        self.assertIn("## 7. Final", md)
+
+
 if __name__ == "__main__":
     unittest.main()
