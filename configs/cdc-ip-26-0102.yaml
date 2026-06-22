@@ -6,6 +6,10 @@ reviewer_role: "an experienced CDC peer reviewer scoring a cooperative-agreement
 # wedged Ollama; qwen3.6:27b stalled on large prompts. This pairing is verified.
 models: ["gemma3:27b", "qwen2.5:32b"]
 
+# Combined-report synthesis (both optional):
+# top_recommendations: 7        # size of the ranked "Top recommendations" section
+# synthesis_model: gemma3:27b   # defaults to the first model above if unset
+
 # Map a criterion's section-id prefix to the scored section it rolls up into.
 section_groups:
   "1": "Background and approach"

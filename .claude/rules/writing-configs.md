@@ -16,6 +16,11 @@ A config is one YAML file per funding opportunity. The engine reads it; you neve
 - `reviewer_role`: persona injected into the system prompt
   (e.g. "an experienced CDC peer reviewer scoring a cooperative-agreement application").
 - `models`: exactly two Ollama model tags, **different families**.
+- `top_recommendations` (optional): number of items in the combined report's synthesized
+  "Top recommendations" section. Defaults to 7.
+- `synthesis_model` (optional): which model writes the synthesized recommendations.
+  Defaults to the first entry in `models` (no extra pull needed). It is a post-combine
+  step that reuses a reviewer model, not a third reviewer.
 - `stop_marker` (optional): truncate extracted text at the first occurrence of this string;
   use it to drop references/appendices the last section would otherwise absorb.
 - `rfa_context` (optional): text appended to every criterion prompt for shared framing.
