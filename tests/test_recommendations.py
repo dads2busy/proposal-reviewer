@@ -142,5 +142,31 @@ class TestSynthesis(unittest.TestCase):
         self.assertEqual(recs[0]["title"], "Background")
 
 
+from proposal_reviewer import render_recommendations
+
+
+class TestRender(unittest.TestCase):
+    def test_header_and_item_format(self):
+        md = render_recommendations([
+            {"title": "Write Background", "points_at_stake": 10,
+             "criteria": ["§1.1"], "do": "Add the section", "why": "currently empty"}])
+        self.assertIn("## 2. Top recommendations (synthesized, ranked by importance)", md)
+        self.assertIn("### 1. Write Background (§1.1) — 10 pts at stake", md)
+        self.assertIn("**Do:** Add the section", md)
+        self.assertIn("**Why:** currently empty", md)
+
+    def test_numbers_multiple_items(self):
+        md = render_recommendations([
+            {"title": "A", "points_at_stake": 5, "criteria": [], "do": "x", "why": "y"},
+            {"title": "B", "points_at_stake": 3, "criteria": [], "do": "x", "why": "y"}])
+        self.assertIn("### 1. A", md)
+        self.assertIn("### 2. B", md)
+
+    def test_empty_recs_message(self):
+        md = render_recommendations([])
+        self.assertIn("## 2. Top recommendations", md)
+        self.assertIn("No material gaps", md)
+
+
 if __name__ == "__main__":
     unittest.main()

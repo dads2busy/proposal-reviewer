@@ -292,6 +292,23 @@ def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
         return deterministic_recommendations(digest, n)
 
 
+def render_recommendations(recs):
+    """Render the synthesized recommendations as the combined-report §2 body."""
+    out = ["\n## 2. Top recommendations (synthesized, ranked by importance)\n"]
+    if not recs:
+        out.append("No material gaps — both reviewers scored every criterion at or near max.")
+        return "\n".join(out)
+    for i, r in enumerate(recs, 1):
+        crits = ", ".join(r.get("criteria") or [])
+        suffix = f" ({crits})" if crits else ""
+        pts = r.get("points_at_stake", "")
+        pts_str = f" — {pts} pts at stake" if pts != "" else ""
+        out.append(f"\n### {i}. {r.get('title', '(untitled)')}{suffix}{pts_str}")
+        out.append(f"**Do:** {str(r.get('do', '')).strip()}")
+        out.append(f"**Why:** {str(r.get('why', '')).strip()}")
+    return "\n".join(out)
+
+
 # ── combine ─────────────────────────────────────────────────────────
 def section_subtotals(cfg, results):
     groups = {}
