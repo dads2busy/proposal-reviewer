@@ -36,6 +36,10 @@ class TestDetectionHelpers(unittest.TestCase):
         self.assertFalse(is_missing_result(
             {"justification": "Solid section", "gaps": ["one minor detail could be clearer"]}))
 
+    def test_missing_false_on_benign_missing_phrase(self):
+        self.assertFalse(is_missing_result(
+            {"justification": "", "gaps": ["the discussion is missing a citation"]}))
+
 
 def _sample_cfg_and_results():
     cfg = {"criteria": [
@@ -166,6 +170,17 @@ class TestRender(unittest.TestCase):
         md = render_recommendations([])
         self.assertIn("## 2. Top recommendations", md)
         self.assertIn("No material gaps", md)
+
+    def test_render_omits_none_points(self):
+        md = render_recommendations([{
+            "title": "X",
+            "points_at_stake": None,
+            "criteria": [],
+            "do": "d",
+            "why": "w"
+        }])
+        self.assertIn("### 1. X", md)
+        self.assertNotIn("None pts at stake", md)
 
 
 from proposal_reviewer import build_combined

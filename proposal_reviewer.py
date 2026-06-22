@@ -177,7 +177,7 @@ REQUIRED_PATTERNS = (
     "letter of support", "letters of support",
     "organizational chart", "org chart",
 )
-MISSING_MARKERS = ("not found", "missing", "placeholder", "still need")
+MISSING_MARKERS = ("not found", "section missing", "missing.", "placeholder", "still need")
 
 
 def is_required_criterion(crit):
@@ -302,7 +302,7 @@ def render_recommendations(recs):
         crits = ", ".join(r.get("criteria") or [])
         suffix = f" ({crits})" if crits else ""
         pts = r.get("points_at_stake", "")
-        pts_str = f" — {pts} pts at stake" if pts != "" else ""
+        pts_str = f" — {pts} pts at stake" if pts not in ("", None) else ""
         out.append(f"\n### {i}. {r.get('title', '(untitled)')}{suffix}{pts_str}")
         out.append(f"**Do:** {str(r.get('do', '')).strip()}")
         out.append(f"**Why:** {str(r.get('why', '')).strip()}")
