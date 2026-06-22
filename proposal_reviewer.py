@@ -171,6 +171,27 @@ def keyword_scan(text, keywords):
     return "\n".join(out), pct, missing
 
 
+# ── recommendation synthesis ────────────────────────────────────────
+REQUIRED_PATTERNS = (
+    "data management plan",
+    "letter of support", "letters of support",
+    "organizational chart", "org chart",
+)
+MISSING_MARKERS = ("not found", "missing", "placeholder", "still need")
+
+
+def is_required_criterion(crit):
+    """True if the criterion hinges on a required attachment the narrative can only reference."""
+    text = (crit.get("name", "") + " " + crit.get("look_for", "")).lower()
+    return any(p in text for p in REQUIRED_PATTERNS)
+
+
+def is_missing_result(res):
+    """True if a model's result indicates the scored section was absent or placeholder."""
+    blob = (res.get("justification", "") + " " + " ".join(res.get("gaps", []) or [])).lower()
+    return any(m in blob for m in MISSING_MARKERS)
+
+
 # ── combine ─────────────────────────────────────────────────────────
 def section_subtotals(cfg, results):
     groups = {}
