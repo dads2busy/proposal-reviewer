@@ -183,6 +183,56 @@ class TestRender(unittest.TestCase):
         self.assertNotIn("None pts at stake", md)
 
 
+from proposal_reviewer import _chat_json, JSONRetryError, MAX_JSON_ATTEMPTS
+
+
+class TestChatJSONRetry(unittest.TestCase):
+    def test_returns_validated_on_first_success(self):
+        calls = []
+        def fake(m, s, u):
+            calls.append(u)
+            return '{"awarded": 5}'
+        out = _chat_json("m", "sys", "user", validate=lambda d: d, chat_fn=fake)
+        self.assertEqual(out, {"awarded": 5})
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_then_succeeds_with_nudge(self):
+        calls = []
+        seq = ["not json", '{"ok": true}']
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        out = _chat_json("m", "sys", "USERPROMPT", validate=lambda d: d, chat_fn=fake)
+        self.assertEqual(out, {"ok": True})
+        self.assertEqual(len(calls), 2)
+        self.assertIn("USERPROMPT", calls[1])          # original prompt retained
+        self.assertIn("not valid JSON", calls[1])      # corrective nudge appended on retry
+
+    def test_raises_after_exhausting_attempts(self):
+        calls = []
+        def fake(m, s, u):
+            calls.append(u)
+            return "still not json"
+        with self.assertRaises(JSONRetryError) as ctx:
+            _chat_json("m", "sys", "user", validate=lambda d: d, chat_fn=fake)
+        self.assertEqual(len(calls), MAX_JSON_ATTEMPTS)
+        self.assertEqual(ctx.exception.raw, "still not json")
+
+    def test_validate_rejection_triggers_retry(self):
+        calls = []
+        seq = ['{"x": 1}', '[1, 2]']
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        def validate(parsed):
+            if not isinstance(parsed, list):
+                raise ValueError("need a list")
+            return parsed
+        out = _chat_json("m", "sys", "user", validate=validate, chat_fn=fake)
+        self.assertEqual(out, [1, 2])
+        self.assertEqual(len(calls), 2)
+
+
 from proposal_reviewer import build_combined
 
 

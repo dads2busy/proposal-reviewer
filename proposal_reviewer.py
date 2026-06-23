@@ -240,6 +240,37 @@ def _ollama_chat(model, system_prompt, user_prompt, timeout=900):
         return json.loads(r.read())["choices"][0]["message"]["content"]
 
 
+class JSONRetryError(Exception):
+    """Raised when a model never returns parseable, valid JSON within the attempt budget.
+    `.raw` holds the last unparseable content for the caller's fallback message."""
+    def __init__(self, raw):
+        self.raw = raw
+        super().__init__("model did not return valid JSON")
+
+
+MAX_JSON_ATTEMPTS = 3
+_JSON_NUDGE = ("\n\nIMPORTANT: your previous reply was not valid JSON. "
+               "Respond with ONLY the JSON, no prose and no code fences.")
+
+
+def _chat_json(model, system, user, validate, attempts=MAX_JSON_ATTEMPTS, chat_fn=_ollama_chat):
+    """Call the model and parse its reply as JSON, retrying with a corrective nudge on
+    parse/validate failure. `validate(parsed)` returns the cleaned result or raises to
+    trigger a retry. Network errors from chat_fn propagate (NOT retried here).
+    Raises JSONRetryError(last_raw) if no attempt yields valid JSON."""
+    raw = ""
+    for i in range(attempts):
+        prompt = user if i == 0 else user + _JSON_NUDGE
+        raw = chat_fn(model, system, prompt)
+        cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        try:
+            return validate(json.loads(cleaned))
+        except Exception:
+            print(f"  {model}: unparseable JSON (attempt {i + 1}/{attempts})", file=sys.stderr)
+            continue
+    raise JSONRetryError(raw)
+
+
 def _digest_to_prompt(digest):
     lines = []
     for d in digest:
