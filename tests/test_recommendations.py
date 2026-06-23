@@ -264,5 +264,36 @@ class TestBuildCombinedIntegration(unittest.TestCase):
         self.assertIn("## 7. Final", md)
 
 
+from proposal_reviewer import ask_model
+
+
+class TestAskModelRetry(unittest.TestCase):
+    CRIT = {"name": "Test", "look_for": "stuff", "max": 10}
+
+    def test_parses_and_clamps_on_success(self):
+        fake = lambda m, s, u: '{"awarded": 15, "strengths": [], "gaps": []}'
+        res = ask_model("m", "sys", self.CRIT, "Title", "body text", chat_fn=fake)
+        self.assertEqual(res["awarded"], 10)   # clamped to max
+        self.assertEqual(res["max"], 10)
+
+    def test_retries_bad_then_good(self):
+        calls = []
+        seq = ["garbage", '{"awarded": 7}']
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        res = ask_model("m", "sys", self.CRIT, "Title", "body", chat_fn=fake)
+        self.assertEqual(res["awarded"], 7)
+        self.assertEqual(len(calls), 2)
+
+    def test_unparsed_fallback_after_exhaustion(self):
+        fake = lambda m, s, u: "never json"
+        res = ask_model("m", "sys", self.CRIT, "Title", "body", chat_fn=fake)
+        self.assertEqual(res["awarded"], 0)
+        self.assertEqual(res["max"], 10)
+        self.assertIn("UNPARSED MODEL OUTPUT", res["justification"])
+        self.assertIn("never json", res["justification"])
+
+
 if __name__ == "__main__":
     unittest.main()

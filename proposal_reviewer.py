@@ -105,29 +105,25 @@ def resolve_group(crit, section_groups):
 
 
 # ── model call ──────────────────────────────────────────────────────
-def ask_model(model, system_prompt, crit, sect_title, body, rfa_context=""):
+def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="", chat_fn=None):
+    if chat_fn is None:
+        chat_fn = _ollama_chat
     user = (f"CRITERION: {crit['name']}  (max {crit['max']} points)\n"
             f"WHAT REVIEWERS LOOK FOR: {crit['look_for']}\n")
     if rfa_context:
         user += f"\nRELEVANT RFA CONTEXT:\n{rfa_context}\n"
     user += f"\nPROPOSAL SECTION — {sect_title}:\n{body[:14000]}"
-    payload = {"model": model, "temperature": 0.2,
-               "messages": [{"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user}],
-               "options": {"num_ctx": 16384}}
-    req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=900) as r:
-        content = json.loads(r.read())["choices"][0]["message"]["content"]
-    cleaned = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
-    try:
-        d = json.loads(cleaned)
+
+    def coerce(d):
         d["awarded"] = max(0, min(int(d.get("awarded", 0) or 0), crit["max"]))
         d["max"] = crit["max"]
         return d
-    except Exception:
+
+    try:
+        return _chat_json(model, system_prompt, user, coerce, chat_fn=chat_fn)
+    except JSONRetryError as e:
         return {"awarded": 0, "max": crit["max"], "strengths": [], "gaps": [],
-                "justification": "UNPARSED MODEL OUTPUT:\n" + content}
+                "justification": "UNPARSED MODEL OUTPUT:\n" + e.raw}
 
 
 def review_with_model(model, cfg, sections, full_text):
