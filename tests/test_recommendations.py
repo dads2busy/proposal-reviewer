@@ -309,5 +309,23 @@ class TestAskModelRetry(unittest.TestCase):
         self.assertIn("never json", res["justification"])
 
 
+from pathlib import Path as _Path
+from proposal_reviewer import stamped
+
+
+class TestStamped(unittest.TestCase):
+    def test_composes_timestamped_name(self):
+        self.assertEqual(
+            stamped("compliance_report_combined", "20260622-211500", "md"),
+            "compliance_report_combined_20260622-211500.md")
+
+    def test_with_suffix_swaps_only_extension(self):
+        # render() derives html/pdf from the combined .md path via with_suffix;
+        # the timestamp must survive because it lives in the stem, not the extension.
+        p = _Path(stamped("compliance_report_combined", "20260622-211500", "md"))
+        self.assertEqual(p.with_suffix(".pdf").name,
+                         "compliance_report_combined_20260622-211500.pdf")
+
+
 if __name__ == "__main__":
     unittest.main()

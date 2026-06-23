@@ -444,6 +444,13 @@ def dry_run(cfg, sections, full_text):
     print(f"\nKeyword coverage: {pct:.0f}%  |  missing: {[m[0] for m in missing]}")
 
 
+def stamped(base, ts, ext):
+    """Compose a timestamped output filename, e.g.
+    stamped('compliance_report_combined', '20260622-211500', 'md')
+    -> 'compliance_report_combined_20260622-211500.md'."""
+    return f"{base}_{ts}.{ext}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("proposal")
@@ -468,21 +475,22 @@ def main():
         return
 
     outdir = path.parent
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     all_results = {}
     for model in models:
         print(f"Reviewing with {model} ...", file=sys.stderr)
         res, report = review_with_model(model, cfg, sections, full_text)
         all_results[model] = res
         safe = model.replace(":", "_").replace("/", "_")
-        (outdir / f"compliance_report_{safe}.md").write_text(report)
+        (outdir / stamped(f"compliance_report_{safe}", ts, "md")).write_text(report)
 
     kw_text, kw_pct, kw_missing = keyword_scan(full_text, cfg.get("keywords", []))
-    (outdir / "compliance_report_keywords.md").write_text(kw_text)
+    (outdir / stamped("compliance_report_keywords", ts, "md")).write_text(kw_text)
 
     print("Synthesizing recommendations ...", file=sys.stderr)
     recs = synthesize_recommendations(cfg, models, all_results)
     combined = build_combined(cfg, models, all_results, kw_pct, kw_missing, recs)
-    cpath = outdir / "compliance_report_combined.md"
+    cpath = outdir / stamped("compliance_report_combined", ts, "md")
     cpath.write_text(combined)
     rendered = render(cpath)
     print(f"Wrote per-model reports, keywords, and {cpath.name} ({rendered})", file=sys.stderr)
