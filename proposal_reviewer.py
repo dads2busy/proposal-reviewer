@@ -105,29 +105,25 @@ def resolve_group(crit, section_groups):
 
 
 # ── model call ──────────────────────────────────────────────────────
-def ask_model(model, system_prompt, crit, sect_title, body, rfa_context=""):
+def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="", chat_fn=None):
+    if chat_fn is None:
+        chat_fn = _ollama_chat
     user = (f"CRITERION: {crit['name']}  (max {crit['max']} points)\n"
             f"WHAT REVIEWERS LOOK FOR: {crit['look_for']}\n")
     if rfa_context:
         user += f"\nRELEVANT RFA CONTEXT:\n{rfa_context}\n"
     user += f"\nPROPOSAL SECTION — {sect_title}:\n{body[:14000]}"
-    payload = {"model": model, "temperature": 0.2,
-               "messages": [{"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user}],
-               "options": {"num_ctx": 16384}}
-    req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=900) as r:
-        content = json.loads(r.read())["choices"][0]["message"]["content"]
-    cleaned = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
-    try:
-        d = json.loads(cleaned)
+
+    def coerce(d):
         d["awarded"] = max(0, min(int(d.get("awarded", 0) or 0), crit["max"]))
         d["max"] = crit["max"]
         return d
-    except Exception:
+
+    try:
+        return _chat_json(model, system_prompt, user, coerce, chat_fn=chat_fn)
+    except JSONRetryError as e:
         return {"awarded": 0, "max": crit["max"], "strengths": [], "gaps": [],
-                "justification": "UNPARSED MODEL OUTPUT:\n" + content}
+                "justification": "UNPARSED MODEL OUTPUT:\n" + e.raw}
 
 
 def review_with_model(model, cfg, sections, full_text):
@@ -240,6 +236,37 @@ def _ollama_chat(model, system_prompt, user_prompt, timeout=900):
         return json.loads(r.read())["choices"][0]["message"]["content"]
 
 
+class JSONRetryError(Exception):
+    """Raised when a model never returns parseable, valid JSON within the attempt budget.
+    `.raw` holds the last unparseable content for the caller's fallback message."""
+    def __init__(self, raw):
+        self.raw = raw
+        super().__init__("model did not return valid JSON")
+
+
+MAX_JSON_ATTEMPTS = 3
+_JSON_NUDGE = ("\n\nIMPORTANT: your previous reply was not valid JSON. "
+               "Respond with ONLY the JSON, no prose and no code fences.")
+
+
+def _chat_json(model, system, user, validate, attempts=MAX_JSON_ATTEMPTS, chat_fn=_ollama_chat):
+    """Call the model and parse its reply as JSON, retrying with a corrective nudge on
+    parse/validate failure. `validate(parsed)` returns the cleaned result or raises to
+    trigger a retry. Network errors from chat_fn propagate (NOT retried here).
+    Raises JSONRetryError(last_raw) if no attempt yields valid JSON."""
+    raw = ""
+    for i in range(attempts):
+        prompt = user if i == 0 else user + _JSON_NUDGE
+        raw = chat_fn(model, system, prompt)
+        cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        try:
+            return validate(json.loads(cleaned))
+        except Exception:
+            print(f"  {model}: unparseable JSON (attempt {i + 1}/{attempts})", file=sys.stderr)
+            continue
+    raise JSONRetryError(raw)
+
+
 def _digest_to_prompt(digest):
     lines = []
     for d in digest:
@@ -280,12 +307,13 @@ def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
     system = SYNTH_SYSTEM.format(role=role, n=n)
     user = ("CRITERIA WITH GAPS (ranked candidates):\n" + _digest_to_prompt(digest)
             + f"\n\nReturn the top {n} merged recommendations as a JSON array.")
-    try:
-        content = chat_fn(model, system, user)
-        cleaned = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
-        recs = json.loads(cleaned)
-        if not isinstance(recs, list) or not recs:
+    def _valid_recs(parsed):
+        if not isinstance(parsed, list) or not parsed:
             raise ValueError("empty or non-list synthesis output")
+        return parsed
+
+    try:
+        recs = _chat_json(model, system, user, _valid_recs, chat_fn=chat_fn)
         return recs[:n]
     except Exception as e:
         print(f"  synthesis failed ({e}); using deterministic ranking", file=sys.stderr)
@@ -416,6 +444,13 @@ def dry_run(cfg, sections, full_text):
     print(f"\nKeyword coverage: {pct:.0f}%  |  missing: {[m[0] for m in missing]}")
 
 
+def stamped(base, ts, ext):
+    """Compose a timestamped output filename, e.g.
+    stamped('compliance_report_combined', '20260622-211500', 'md')
+    -> 'compliance_report_combined_20260622-211500.md'."""
+    return f"{base}_{ts}.{ext}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("proposal")
@@ -440,21 +475,22 @@ def main():
         return
 
     outdir = path.parent
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     all_results = {}
     for model in models:
         print(f"Reviewing with {model} ...", file=sys.stderr)
         res, report = review_with_model(model, cfg, sections, full_text)
         all_results[model] = res
         safe = model.replace(":", "_").replace("/", "_")
-        (outdir / f"compliance_report_{safe}.md").write_text(report)
+        (outdir / stamped(f"compliance_report_{safe}", ts, "md")).write_text(report)
 
     kw_text, kw_pct, kw_missing = keyword_scan(full_text, cfg.get("keywords", []))
-    (outdir / "compliance_report_keywords.md").write_text(kw_text)
+    (outdir / stamped("compliance_report_keywords", ts, "md")).write_text(kw_text)
 
     print("Synthesizing recommendations ...", file=sys.stderr)
     recs = synthesize_recommendations(cfg, models, all_results)
     combined = build_combined(cfg, models, all_results, kw_pct, kw_missing, recs)
-    cpath = outdir / "compliance_report_combined.md"
+    cpath = outdir / stamped("compliance_report_combined", ts, "md")
     cpath.write_text(combined)
     rendered = render(cpath)
     print(f"Wrote per-model reports, keywords, and {cpath.name} ({rendered})", file=sys.stderr)

@@ -146,6 +146,20 @@ class TestSynthesis(unittest.TestCase):
         self.assertEqual(recs[0]["title"], "Background")
 
 
+class TestSynthesisRetry(unittest.TestCase):
+    def test_retries_then_succeeds_instead_of_fallback(self):
+        cfg, models, results = _sample_cfg_and_results()
+        seq = ["garbage",
+               '[{"title":"Fix","points_at_stake":10,"criteria":[],"do":"d","why":"w"}]']
+        calls = []
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=fake)
+        self.assertEqual(recs[0]["title"], "Fix")   # model output, not deterministic fallback
+        self.assertEqual(len(calls), 2)
+
+
 from proposal_reviewer import render_recommendations
 
 
@@ -183,6 +197,56 @@ class TestRender(unittest.TestCase):
         self.assertNotIn("None pts at stake", md)
 
 
+from proposal_reviewer import _chat_json, JSONRetryError, MAX_JSON_ATTEMPTS
+
+
+class TestChatJSONRetry(unittest.TestCase):
+    def test_returns_validated_on_first_success(self):
+        calls = []
+        def fake(m, s, u):
+            calls.append(u)
+            return '{"awarded": 5}'
+        out = _chat_json("m", "sys", "user", validate=lambda d: d, chat_fn=fake)
+        self.assertEqual(out, {"awarded": 5})
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_then_succeeds_with_nudge(self):
+        calls = []
+        seq = ["not json", '{"ok": true}']
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        out = _chat_json("m", "sys", "USERPROMPT", validate=lambda d: d, chat_fn=fake)
+        self.assertEqual(out, {"ok": True})
+        self.assertEqual(len(calls), 2)
+        self.assertIn("USERPROMPT", calls[1])          # original prompt retained
+        self.assertIn("not valid JSON", calls[1])      # corrective nudge appended on retry
+
+    def test_raises_after_exhausting_attempts(self):
+        calls = []
+        def fake(m, s, u):
+            calls.append(u)
+            return "still not json"
+        with self.assertRaises(JSONRetryError) as ctx:
+            _chat_json("m", "sys", "user", validate=lambda d: d, chat_fn=fake)
+        self.assertEqual(len(calls), MAX_JSON_ATTEMPTS)
+        self.assertEqual(ctx.exception.raw, "still not json")
+
+    def test_validate_rejection_triggers_retry(self):
+        calls = []
+        seq = ['{"x": 1}', '[1, 2]']
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        def validate(parsed):
+            if not isinstance(parsed, list):
+                raise ValueError("need a list")
+            return parsed
+        out = _chat_json("m", "sys", "user", validate=validate, chat_fn=fake)
+        self.assertEqual(out, [1, 2])
+        self.assertEqual(len(calls), 2)
+
+
 from proposal_reviewer import build_combined
 
 
@@ -212,6 +276,55 @@ class TestBuildCombinedIntegration(unittest.TestCase):
         md = build_combined(cfg, models, results, 100.0, [], recs)
         self.assertIn("### 1. Fix Background", md)
         self.assertIn("## 7. Final", md)
+
+
+from proposal_reviewer import ask_model
+
+
+class TestAskModelRetry(unittest.TestCase):
+    CRIT = {"name": "Test", "look_for": "stuff", "max": 10}
+
+    def test_parses_and_clamps_on_success(self):
+        fake = lambda m, s, u: '{"awarded": 15, "strengths": [], "gaps": []}'
+        res = ask_model("m", "sys", self.CRIT, "Title", "body text", chat_fn=fake)
+        self.assertEqual(res["awarded"], 10)   # clamped to max
+        self.assertEqual(res["max"], 10)
+
+    def test_retries_bad_then_good(self):
+        calls = []
+        seq = ["garbage", '{"awarded": 7}']
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        res = ask_model("m", "sys", self.CRIT, "Title", "body", chat_fn=fake)
+        self.assertEqual(res["awarded"], 7)
+        self.assertEqual(len(calls), 2)
+
+    def test_unparsed_fallback_after_exhaustion(self):
+        fake = lambda m, s, u: "never json"
+        res = ask_model("m", "sys", self.CRIT, "Title", "body", chat_fn=fake)
+        self.assertEqual(res["awarded"], 0)
+        self.assertEqual(res["max"], 10)
+        self.assertIn("UNPARSED MODEL OUTPUT", res["justification"])
+        self.assertIn("never json", res["justification"])
+
+
+from pathlib import Path as _Path
+from proposal_reviewer import stamped
+
+
+class TestStamped(unittest.TestCase):
+    def test_composes_timestamped_name(self):
+        self.assertEqual(
+            stamped("compliance_report_combined", "20260622-211500", "md"),
+            "compliance_report_combined_20260622-211500.md")
+
+    def test_with_suffix_swaps_only_extension(self):
+        # render() derives html/pdf from the combined .md path via with_suffix;
+        # the timestamp must survive because it lives in the stem, not the extension.
+        p = _Path(stamped("compliance_report_combined", "20260622-211500", "md"))
+        self.assertEqual(p.with_suffix(".pdf").name,
+                         "compliance_report_combined_20260622-211500.pdf")
 
 
 if __name__ == "__main__":

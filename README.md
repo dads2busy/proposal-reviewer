@@ -52,8 +52,11 @@ sometimes gloss (specific platforms, named hubs, required attachments).
 
 ## Output
 
-- `compliance_report_<model>.md` — one per model
-- `compliance_report_keywords.md` — deterministic phrase coverage
-- `compliance_report_combined.md` / `.html` / `.pdf` — merged: per-section scores
-  per model, per-criterion divergence flags, gaps where both models converge,
-  shared strengths, and missing-phrase scan
+Every run stamps its files with a shared `YYYYMMDD-HHMMSS` suffix (`<ts>`) so
+repeated runs don't overwrite each other:
+
+- `compliance_report_<model>_<ts>.md` — one per model
+- `compliance_report_keywords_<ts>.md` — deterministic phrase coverage
+- `compliance_report_combined_<ts>.md` / `.html` / `.pdf` — merged: synthesized
+  top recommendations, per-section scores per model, per-criterion divergence flags,
+  gaps where both models converge, shared strengths, and missing-phrase scan
