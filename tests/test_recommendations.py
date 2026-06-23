@@ -146,6 +146,20 @@ class TestSynthesis(unittest.TestCase):
         self.assertEqual(recs[0]["title"], "Background")
 
 
+class TestSynthesisRetry(unittest.TestCase):
+    def test_retries_then_succeeds_instead_of_fallback(self):
+        cfg, models, results = _sample_cfg_and_results()
+        seq = ["garbage",
+               '[{"title":"Fix","points_at_stake":10,"criteria":[],"do":"d","why":"w"}]']
+        calls = []
+        def fake(m, s, u):
+            calls.append(u)
+            return seq[len(calls) - 1]
+        recs = synthesize_recommendations(cfg, models, results, chat_fn=fake)
+        self.assertEqual(recs[0]["title"], "Fix")   # model output, not deterministic fallback
+        self.assertEqual(len(calls), 2)
+
+
 from proposal_reviewer import render_recommendations
 
 

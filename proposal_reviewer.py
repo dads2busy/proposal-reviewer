@@ -307,12 +307,13 @@ def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
     system = SYNTH_SYSTEM.format(role=role, n=n)
     user = ("CRITERIA WITH GAPS (ranked candidates):\n" + _digest_to_prompt(digest)
             + f"\n\nReturn the top {n} merged recommendations as a JSON array.")
-    try:
-        content = chat_fn(model, system, user)
-        cleaned = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
-        recs = json.loads(cleaned)
-        if not isinstance(recs, list) or not recs:
+    def _valid_recs(parsed):
+        if not isinstance(parsed, list) or not parsed:
             raise ValueError("empty or non-list synthesis output")
+        return parsed
+
+    try:
+        recs = _chat_json(model, system, user, _valid_recs, chat_fn=chat_fn)
         return recs[:n]
     except Exception as e:
         print(f"  synthesis failed ({e}); using deterministic ranking", file=sys.stderr)
