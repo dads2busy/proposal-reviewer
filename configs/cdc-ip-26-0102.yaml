@@ -156,7 +156,7 @@ keywords:
   - {pattern: "logic model", category: "Alignment"}
   - {pattern: "work ?plan", category: "Alignment", label: "work plan"}
   - {pattern: "github|non.?proprietary|open.?source|source.code policy", category: "Open code (2 pts)", label: "open / non-proprietary code"}
-  - {pattern: "letter of support", category: "Partnerships"}
+  - {pattern: "letter of support|pleased to support|look forward to partnering", category: "Partnerships", label: "letter of support"}
   - {pattern: "jurisdictional", category: "Partnerships"}
   - {pattern: "public health partner", category: "Partnerships"}
   - {pattern: "data management plan", category: "Evaluation"}
