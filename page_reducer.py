@@ -281,10 +281,12 @@ def main():
     target_words = int(current_words * (1 - args.target_reduction))
     words_to_cut = current_words - target_words
 
-    # Context window: need to hold input (~chars/4 tokens) + output (similar).
-    # Add generous headroom; qwen3.6:27b supports 262K.
+    # num_ctx must hold: input tokens + thinking tokens (if enabled) + output tokens.
+    # Thinking tokens can easily match or exceed the input, so we scale up aggressively.
+    # qwen3.6:27b supports 262K; llama3.3:70b supports 128K — stay under 131072 for compat.
     input_tokens = sum(len(p.text) for p in body_paras) // 4
-    num_ctx = max(16384, (input_tokens * 3) // 1024 * 1024 + 16384)  # round up with buffer
+    multiplier = 8 if args.think else 4
+    num_ctx = min(131072, max(32768, input_tokens * multiplier))
 
     print(
         f"Body paragraphs: {len(body_paras)}  |  Headings skipped: {heading_count}\n"
