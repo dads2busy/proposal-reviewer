@@ -64,20 +64,44 @@ def clean_heading(raw: str) -> str:
 
 def parse_sections(md: str) -> dict:
     """Map numbered heading IDs (1.1, 2.3, ...) to body text. Unnumbered
-    subheadings fold into the preceding numbered section."""
+    subheadings fold into the preceding numbered section.
+
+    Handles two heading styles:
+      - Markdown (pandoc/docx): ## 1.1 Background
+      - Plain text (pdftotext): 1.1 Background  (column 0, no TOC dots)
+    Only the first occurrence of each section ID is kept so that reference
+    numbers later in the document (e.g. "3.4 (2017): e83.") don't overwrite
+    the real section content.
+    """
     lines = md.splitlines()
     numbered = []
     for i, ln in enumerate(lines):
+        # Markdown headings produced by pandoc (docx → md conversion)
         m = re.match(r"^#+\s+(.*)$", ln)
-        if not m:
+        if m:
+            title = clean_heading(m.group(1))
+            num = re.match(r"^(\d+(?:\.\d+)*)[.)]?\s+(.*)$", title)
+            if num:
+                numbered.append((i, num.group(1), title))
             continue
-        title = clean_heading(m.group(1))
-        num = re.match(r"^(\d+(?:\.\d+)*)[.)]?\s+(.*)$", title)
-        if num:
-            numbered.append((i, num.group(1), title))
+        # Plain-text numbered headings from pdftotext (e.g. "1.1 Background").
+        # Must start at column 0, have at least one dot, begin with a letter
+        # after the number, and not be a TOC entry (which contains "....").
+        m2 = re.match(r"^(\d+\.\d+(?:\.\d+)?)[.):]?\s+([A-Za-z].{1,})$", ln)
+        if m2 and "...." not in ln:
+            numbered.append((i, m2.group(1), ln.strip()))
+
+    # Keep only the first occurrence of each section ID.
+    seen: set = set()
+    deduped = []
+    for item in numbered:
+        if item[1] not in seen:
+            seen.add(item[1])
+            deduped.append(item)
+
     sections = {}
-    for idx, (li, sid, title) in enumerate(numbered):
-        end = numbered[idx + 1][0] if idx + 1 < len(numbered) else len(lines)
+    for idx, (li, sid, title) in enumerate(deduped):
+        end = deduped[idx + 1][0] if idx + 1 < len(deduped) else len(lines)
         sections[sid] = {"title": title, "body": "\n".join(lines[li + 1:end]).strip()}
     return sections
 
