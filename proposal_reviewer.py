@@ -29,6 +29,10 @@ except ImportError:
 
 OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
 
+# Section text handed to a model per criterion. Raise via `max_section_chars` in
+# the config when a proposal's sections are long; the ceiling is num_ctx below.
+DEFAULT_MAX_SECTION_CHARS = 14000
+
 DEFAULT_ROLE = "an experienced grant reviewer"
 SYSTEM_TEMPLATE = (
     "You are {role}. Given ONE scoring criterion (with its point maximum) and the "
@@ -62,11 +66,14 @@ def clean_heading(raw: str) -> str:
     return raw.replace("\\", "").strip()
 
 
-def parse_sections(md: str) -> dict:
+def parse_sections(md: str, heading_patterns=None) -> dict:
     """Map numbered heading IDs (1.1, 2.3, ...) to body text. Unnumbered
     subheadings fold into the preceding numbered section.
 
-    Handles two heading styles:
+    Handles three heading styles:
+      - Config-supplied `heading_patterns`: [{pattern: <regex>, id: "4.1"}, ...],
+        which give a section ID to headings that carry no usable number of their
+        own (e.g. "TA1. Digital Twins"). These win over the two passes below.
       - Markdown (pandoc/docx): ## 1.1 Background
       - Plain text (pdftotext): 1.1 Background  (column 0, no TOC dots)
     Only the first occurrence of each section ID is kept so that reference
@@ -74,8 +81,17 @@ def parse_sections(md: str) -> dict:
     the real section content.
     """
     lines = md.splitlines()
+    custom = [(re.compile(h["pattern"]), str(h["id"])) for h in (heading_patterns or [])]
     numbered = []
     for i, ln in enumerate(lines):
+        # Config-supplied headings, checked first so a proposal with unnumbered
+        # headings can still be addressed section by section.
+        if custom and "...." not in ln:
+            stripped = ln.strip()
+            hit = next((sid for rx, sid in custom if rx.search(stripped)), None)
+            if hit:
+                numbered.append((i, hit, stripped))
+                continue
         # Markdown headings produced by pandoc (docx → md conversion)
         m = re.match(r"^#+\s+(.*)$", ln)
         if m:
@@ -129,14 +145,15 @@ def resolve_group(crit, section_groups):
 
 
 # ── model call ──────────────────────────────────────────────────────
-def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="", chat_fn=None):
+def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="",
+              max_chars=DEFAULT_MAX_SECTION_CHARS, chat_fn=None):
     if chat_fn is None:
         chat_fn = _ollama_chat
     user = (f"CRITERION: {crit['name']}  (max {crit['max']} points)\n"
             f"WHAT REVIEWERS LOOK FOR: {crit['look_for']}\n")
     if rfa_context:
         user += f"\nRELEVANT RFA CONTEXT:\n{rfa_context}\n"
-    user += f"\nPROPOSAL SECTION — {sect_title}:\n{body[:14000]}"
+    user += f"\nPROPOSAL SECTION — {sect_title}:\n{body[:max_chars]}"
 
     def coerce(d):
         d["awarded"] = max(0, min(int(d.get("awarded", 0) or 0), crit["max"]))
@@ -150,10 +167,11 @@ def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="", chat
                 "justification": "UNPARSED MODEL OUTPUT:\n" + e.raw}
 
 
-def review_with_model(model, cfg, sections, full_text):
+def review_with_model(model, cfg, sections, full_text, chat_fn=None):
     role = cfg.get("reviewer_role", DEFAULT_ROLE)
     system_prompt = cfg.get("system_prompt") or SYSTEM_TEMPLATE.format(role=role)
     rfa_context = cfg.get("rfa_context", "")
+    max_chars = int(cfg.get("max_section_chars", DEFAULT_MAX_SECTION_CHARS))
     results = []
     lines = [f"# Compliance Assessment — {model} (local)\n", f"_Generated {datetime.date.today()}_\n"]
     for crit in cfg["criteria"]:
@@ -164,7 +182,8 @@ def review_with_model(model, cfg, sections, full_text):
                    "justification": "Required section missing."}
             lines.append(f"\n## {crit['name']} — 0/{crit['max']}  ⚠ SECTION MISSING\n")
         else:
-            res = ask_model(model, system_prompt, crit, title, body, rfa_context)
+            res = ask_model(model, system_prompt, crit, title, body, rfa_context,
+                            max_chars=max_chars, chat_fn=chat_fn)
             lines.append(f"\n## {crit['name']} — {res['awarded']}/{crit['max']}\n"
                          f"_{res.get('justification','').strip()}_\n")
             lines += [f"- ✓ {s}" for s in res.get("strengths", [])]
@@ -458,12 +477,15 @@ def dry_run(cfg, sections, full_text):
     print(f"Models: {cfg.get('models')}")
     print(f"Criteria: {len(cfg['criteria'])}  |  Total points: "
           f"{cfg.get('total_points', sum(c['max'] for c in cfg['criteria']))}")
-    print(f"Parsed numbered sections: {sorted(sections)}\n")
-    print(f"{'section':>8}  {'found':>5}  {'words':>6}  criterion")
+    print(f"Parsed numbered sections: {sorted(sections)}")
+    max_chars = int(cfg.get("max_section_chars", DEFAULT_MAX_SECTION_CHARS))
+    print(f"Section text cap: {max_chars} chars\n")
+    print(f"{'section':>8}  {'found':>5}  {'words':>6}  {'chars':>7}  criterion")
     for crit in cfg["criteria"]:
         body, title = get_body(sections, full_text, crit.get("section"))
+        flag = "  ⚠ TRUNCATED" if len(body) > max_chars else ""
         print(f"{str(crit.get('section')):>8}  {'yes' if body else 'NO':>5}  "
-              f"{len(body.split()):>6}  {crit['name']} (/{crit['max']})")
+              f"{len(body.split()):>6}  {len(body):>7}  {crit['name']} (/{crit['max']}){flag}")
     _, pct, missing = keyword_scan(full_text, cfg.get("keywords", []))
     print(f"\nKeyword coverage: {pct:.0f}%  |  missing: {[m[0] for m in missing]}")
 
@@ -492,7 +514,7 @@ def main():
 
     path = Path(args.proposal).expanduser()
     full_text = extract_text(path, cfg.get("stop_marker"))
-    sections = parse_sections(full_text)
+    sections = parse_sections(full_text, cfg.get("heading_patterns"))
 
     if args.dry_run:
         dry_run(cfg, sections, full_text)

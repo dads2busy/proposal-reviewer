@@ -50,7 +50,11 @@ The model endpoint is the local Ollama OpenAI-compatible server at `localhost:11
   the narrative *references* them — flag, don't trust, those scores.
 - The heading parser keys on numbered headings (`1`, `1.2`, ...); unnumbered subheadings
   fold into the preceding numbered section. A proposal with no numbered headings collapses
-  to one "full document" — use `section: "*"` criteria for those.
+  to one "full document" — give it `heading_patterns` in the config to name the sections
+  (see `configs/arpa-h-igor.yaml`), or fall back to `section: "*"` criteria.
+- Section text is capped per criterion (`max_section_chars`, default 14000). `section: "*"`
+  on a long proposal therefore shows the models only the opening pages — `--dry-run` flags
+  this as `⚠ TRUNCATED`. Prefer real sections over `"*"` whenever the document is long.
 
 ## Lineage
 

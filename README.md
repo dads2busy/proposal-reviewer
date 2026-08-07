@@ -42,10 +42,18 @@ next to the proposal file.
 ## Writing a config
 
 See `configs/cdc-ip-26-0102.yaml` (section-targeted scoring) and
-`configs/doe-genesis-16a.yaml` (whole-document scoring) for the two patterns.
+`configs/doe-genesis-16a.yaml` (whole-document scoring) for the two patterns, and
+`configs/arpa-h-igor.yaml` for a proposal whose outline carries no section numbers.
 
 Each criterion targets a numbered narrative section (e.g. `section: "1.2"`) or the
-whole document (`section: "*"`). The model awards `0..max` points per criterion;
+whole document (`section: "*"`). If the draft's headings aren't numbered, map them
+to IDs with `heading_patterns` rather than falling back to `"*"`:
+
+    heading_patterns:
+      - {pattern: '^TA1\.\s[A-Z][a-z]', id: "4.1"}
+
+Section text is capped per criterion at `max_section_chars` (default 14000) to stay
+inside the model context window; `--dry-run` flags any section that would be cut. The model awards `0..max` points per criterion;
 section subtotals roll up via `section_groups` / `section_totals`. The `keywords`
 list is a deterministic regex scan for exact, checkable requirements that models
 sometimes gloss (specific platforms, named hubs, required attachments).

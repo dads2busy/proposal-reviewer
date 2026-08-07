@@ -23,6 +23,16 @@ A config is one YAML file per funding opportunity. The engine reads it; you neve
   step that reuses a reviewer model, not a third reviewer.
 - `stop_marker` (optional): truncate extracted text at the first occurrence of this string;
   use it to drop references/appendices the last section would otherwise absorb.
+- `heading_patterns` (optional): `[{pattern: <regex>, id: "4.1"}, ...]`. Assigns section IDs
+  to headings that carry no usable number of their own, so a proposal whose outline is
+  unnumbered ("TA1. Digital Twins") can still be scored section by section instead of
+  collapsing to `section: "*"`. Checked before the numbered passes; TOC lines (containing
+  `....`) are skipped. Make the patterns fussy — a loose `^TA4\.` also matches subtask
+  labels and padded table cells, and only the FIRST match wins, so a stray hit early in the
+  document silently anchors the section in the wrong place. Verify with `--dry-run`.
+- `max_section_chars` (optional): per-criterion cap on section text sent to the model.
+  Defaults to 14000. Raise it when `--dry-run` flags `⚠ TRUNCATED`; the ceiling is the
+  engine's `num_ctx` of 16384 tokens, so stay at or under ~40000 chars.
 - `rfa_context` (optional): text appended to every criterion prompt for shared framing.
 - `section_groups`: map a section-id prefix → the scored section it rolls up into.
 - `section_totals`: published subtotal per scored section (drives the overall-scores table).
@@ -41,10 +51,14 @@ A config is one YAML file per funding opportunity. The engine reads it; you neve
 3. Set each `section` id to match the draft's actual numbered headings.
 4. Add `keywords` for the small, exact requirements (the ones worth few points but easy to miss).
 5. Run `--dry-run` against the draft; confirm every criterion resolves to a found section
-   with a sensible word count.
-6. Adjust `stop_marker` / section ids until the mapping is clean, then do a full run.
+   with a sensible word count, and that no row is flagged `⚠ TRUNCATED`.
+6. Adjust `stop_marker` / `heading_patterns` / section ids until the mapping is clean, then
+   do a full run.
 
 ## Patterns by example
 
 - `configs/cdc-ip-26-0102.yaml` — section-targeted point rubric (100 pts).
 - `configs/doe-genesis-16a.yaml` — whole-document scoring with `section: "*"` + `rfa_context`.
+- `configs/arpa-h-igor.yaml` — `heading_patterns` for an unnumbered outline, plus a raised
+  `max_section_chars`; also shows how to weight a rubric the sponsor publishes without
+  points, and how to omit a criterion scored against a document you aren't reviewing.
