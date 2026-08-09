@@ -3,7 +3,7 @@
 # Two things about this opportunity shape the config:
 #
 # 1. ARPA-H publishes NO point values. Appendix C §2.5 lists four criteria "in
-#    descending order of importance" only. The caps below (50/30/20) encode that
+#    descending order of importance" only. The caps below (54/30/20) encode that
 #    ordering; they are our weighting, not ARPA-H's. Read subtotals as relative
 #    emphasis, not as a predicted score.
 # 2. Criterion 4 (Assessment of Proposed Cost/Price) is DELIBERATELY OMITTED. It is
@@ -14,9 +14,20 @@
 # The draft follows Appendix C.1's outline, whose subheadings carry no section
 # numbers ("TA1. ...", "System architecture and interfaces ..."), so heading_patterns
 # below assigns the IDs the criteria target.
+#
+# INPUT DOCUMENT. Run against SPIRALE_review_input.md, which build_review_input.py
+# assembles from the three proposal files: the Technical Proposal narrative, plus the
+# Gantt as section 10 and a TDD digest as section 11. Sections 10 and 11 exist because
+# proposal_reviewer.py reviews one file and the TDD is ~48k words of tables; they are
+# separate sections because together they exceed max_section_chars.
+#
+# The 15 narrative criteria keep the caps they had when this config scored the
+# technical proposal alone, so their scores stay comparable across runs. The TDD
+# criterion is additive, which is why the total is 104 rather than 100 — compare runs
+# by percentage.
 
 name: "ARPA-H IGoR — Technical & Management Proposal"
-total_points: 100
+total_points: 104
 reviewer_role: >
   an ARPA-H scientific and technical reviewer evaluating a proposal to the IGoR
   Innovative Solutions Opening, judging each criterion strictly on its own merits
@@ -24,31 +35,36 @@ reviewer_role: >
 models: ["gemma3:27b", "qwen2.5:32b"]
 
 # References Cited is unlimited-length and would otherwise be absorbed by the last
-# scored section. Uppercase matches the body heading, not the mixed-case TOC entry.
-stop_marker: "9. REFERENCES CITED"
+# scored section. The leading "# " matches pandoc's heading, not the TOC entry, which
+# starts with "[". (For a pdftotext source the marker was "9. REFERENCES CITED".)
+stop_marker: "# 9. References Cited"
 
-# TA sections run 20-32k characters; the 14k default would cut TA1-TA4 in half.
-# 36k chars is ~9k tokens, leaving room for the prompt and reply inside num_ctx 16384.
-max_section_chars: 36000
+# TA sections run 22-38k characters and the TDD digest (section 11) is ~61k, so the
+# 14k default would cut TA1-TA4 in half and show the TDD criterion two thirds of the
+# tasks it is meant to judge for completeness. 64k chars is ~16k tokens, which needs
+# num_ctx above the 16384 default; both configured models run comfortably at 32768.
+max_section_chars: 64000
+num_ctx: 32768
 
-# Appendix C.1's outline has unnumbered subheadings. Map them to IDs the criteria
-# can target. `^TA1\.\s[A-Z][a-z]` is deliberately fussy: the single space excludes
-# subtask labels ("TA1.A:") and the capital-then-lowercase excludes table cells that
-# start with a padded TA tag ("TA4.        TAZ effects on the microcirculation"),
-# which otherwise anchors the section inside the Innovative Claims Table.
+# Sections 1,2,3,5,6,7,7.1,7.2,8 carry real numbers, so pandoc's "# 1. Proposal
+# Summary" is picked up by the engine's markdown pass without help. The Technical
+# Plan's subsections are what need mapping — and note the draft has NO heading for
+# "4. Technical Plan" itself (it is underlined body text), while TA3's title is a
+# bold paragraph rather than a Word heading, so `[#*\s]*` tolerates both the "## "
+# and "**" prefixes.
+#
+# The patterns are deliberately fussy. The single space after "TA1." excludes subtask
+# labels ("TA1.A:"), and capital-then-lowercase excludes both the bold run-in
+# "## *TA4.B:* Tessel Biosciences..." and table cells that begin with a padded TA tag
+# ("TA4.        TAZ effects on the microcirculation"), either of which would otherwise
+# anchor the section in the wrong place — only the FIRST match wins.
 heading_patterns:
-  - {pattern: '^1\. PROPOSAL SUMMARY', id: "1"}
-  - {pattern: '^2\. GOALS AND IMPACT', id: "2"}
-  - {pattern: '^3\. GANTT CHART TIMELINE', id: "3"}
-  - {pattern: '^System architecture and interfaces', id: "4.0"}
-  - {pattern: '^TA1\.\s[A-Z][a-z]', id: "4.1"}
-  - {pattern: '^TA2\.\s[A-Z][a-z]', id: "4.2"}
-  - {pattern: '^TA3\.\s[A-Z][a-z]', id: "4.3"}
-  - {pattern: '^TA4\.\s[A-Z][a-z]', id: "4.4"}
-  - {pattern: '^Integration, IV&V', id: "4.5"}
-  - {pattern: '^5\. MITIGATION', id: "5"}
-  - {pattern: '^6\. COMMERCIALIZATION', id: "6"}
-  - {pattern: '^8\. BIOGRAPHICAL INFORMATION', id: "8"}
+  - {pattern: '^[#*\s]*System architecture and interfaces', id: "4.0"}
+  - {pattern: '^[#*\s]*TA1\.\s[A-Z][a-z]', id: "4.1"}
+  - {pattern: '^[#*\s]*TA2\.\s[A-Z][a-z]', id: "4.2"}
+  - {pattern: '^[#*\s]*TA3\.\s[A-Z][a-z]', id: "4.3"}
+  - {pattern: '^[#*\s]*TA4\.\s[A-Z][a-z]', id: "4.4"}
+  - {pattern: '^[#*\s]*Integration, IV&V', id: "4.5"}
 
 rfa_context: >
   IGoR is a 5-year, 3-phase ARPA-H program building a closed-loop research
@@ -77,7 +93,7 @@ rfa_context: >
 section_groups: {}
 
 section_totals:
-  "C1 — Overall Scientific and Technical Merit": 50
+  "C1 — Overall Scientific and Technical Merit": 54
   "C2 — Proposer's Capabilities and/or Related Experience": 30
   "C3 — Relevance to ARPA-H Mission and User Experience": 20
 
@@ -186,16 +202,30 @@ criteria:
       groups, RFCs, bake-offs, the Phase III connect-a-thon, and Associate Performer
       Agreements. Named individuals leading integration with stated annual hours.
 
-  - section: "3"
+  - section: "10"
     group: "C1 — Overall Scientific and Technical Merit"
-    name: "C1: Schedule, milestones, and TDD consistency"
+    name: "C1: Schedule, phasing, and TDD cross-walk"
     max: 2
     look_for: >
-      A Gantt-format timeline showing milestones, tasks and their interrelationships
-      across all three phases, with a task structure consistent with the Task
-      Description Document. Milestones must be measurable and quantitative, defined in
-      time relative to project start — "the assay has been validated" is not
-      sufficient; a numeric performance criterion is.
+      A Gantt-format timeline covering all three phases whose task structure matches the
+      Task Description Document, each row carrying a TDD number, a responsible performer
+      and a bounded span. Phase boundaries should fall at months 18 and 36 per the ISO.
+      Penalize rows with no scheduled span, tasks with no named performer, work that
+      spans the entire 60 months without intermediate structure, and any task in the
+      schedule that has no counterpart in the TDD (or the reverse).
+
+  - section: "11"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: TDD task completeness, deliverables, and milestone quality"
+    max: 4
+    look_for: >
+      Task descriptions complete and in a logical sequence, with deliverables clearly
+      defined and a responsible organization named for every task. Every task must carry
+      measurable milestones: ARPA-H states explicitly that "the assay has been validated"
+      is NOT sufficient and requires quantitative performance criteria such as ">=95%
+      sensitivity and 90% specificity". Withhold points for tasks listing no milestones
+      at all, milestones that merely restate the task title, deliverables left vague, and
+      phase assignments inconsistent with the 18/18/24-month structure.
 
   - section: "5"
     group: "C1 — Overall Scientific and Technical Merit"
