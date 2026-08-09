@@ -30,8 +30,11 @@ except ImportError:
 OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
 
 # Section text handed to a model per criterion. Raise via `max_section_chars` in
-# the config when a proposal's sections are long; the ceiling is num_ctx below.
+# the config when a proposal's sections are long — and raise `num_ctx` with it, since
+# a section that fits the cap but overflows the context window is silently discarded
+# by the model rather than by us. Roughly 4 chars per token.
 DEFAULT_MAX_SECTION_CHARS = 14000
+DEFAULT_NUM_CTX = 16384
 
 DEFAULT_ROLE = "an experienced grant reviewer"
 SYSTEM_TEMPLATE = (
@@ -146,7 +149,7 @@ def resolve_group(crit, section_groups):
 
 # ── model call ──────────────────────────────────────────────────────
 def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="",
-              max_chars=DEFAULT_MAX_SECTION_CHARS, chat_fn=None):
+              max_chars=DEFAULT_MAX_SECTION_CHARS, num_ctx=None, chat_fn=None):
     if chat_fn is None:
         chat_fn = _ollama_chat
     user = (f"CRITERION: {crit['name']}  (max {crit['max']} points)\n"
@@ -161,7 +164,8 @@ def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="",
         return d
 
     try:
-        return _chat_json(model, system_prompt, user, coerce, chat_fn=chat_fn)
+        return _chat_json(model, system_prompt, user, coerce,
+                          num_ctx=num_ctx, chat_fn=chat_fn)
     except JSONRetryError as e:
         return {"awarded": 0, "max": crit["max"], "strengths": [], "gaps": [],
                 "justification": "UNPARSED MODEL OUTPUT:\n" + e.raw}
@@ -172,6 +176,7 @@ def review_with_model(model, cfg, sections, full_text, chat_fn=None):
     system_prompt = cfg.get("system_prompt") or SYSTEM_TEMPLATE.format(role=role)
     rfa_context = cfg.get("rfa_context", "")
     max_chars = int(cfg.get("max_section_chars", DEFAULT_MAX_SECTION_CHARS))
+    num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
     results = []
     lines = [f"# Compliance Assessment — {model} (local)\n", f"_Generated {datetime.date.today()}_\n"]
     for crit in cfg["criteria"]:
@@ -183,7 +188,7 @@ def review_with_model(model, cfg, sections, full_text, chat_fn=None):
             lines.append(f"\n## {crit['name']} — 0/{crit['max']}  ⚠ SECTION MISSING\n")
         else:
             res = ask_model(model, system_prompt, crit, title, body, rfa_context,
-                            max_chars=max_chars, chat_fn=chat_fn)
+                            max_chars=max_chars, num_ctx=num_ctx, chat_fn=chat_fn)
             lines.append(f"\n## {crit['name']} — {res['awarded']}/{crit['max']}\n"
                          f"_{res.get('justification','').strip()}_\n")
             lines += [f"- ✓ {s}" for s in res.get("strengths", [])]
@@ -267,12 +272,12 @@ SYNTH_SYSTEM = (
 )
 
 
-def _ollama_chat(model, system_prompt, user_prompt, timeout=900):
+def _ollama_chat(model, system_prompt, user_prompt, timeout=900, num_ctx=DEFAULT_NUM_CTX):
     """Single local Ollama chat call; returns the message content string."""
     payload = {"model": model, "temperature": 0.2,
                "messages": [{"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}],
-               "options": {"num_ctx": 16384}}
+               "options": {"num_ctx": num_ctx}}
     req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -292,15 +297,20 @@ _JSON_NUDGE = ("\n\nIMPORTANT: your previous reply was not valid JSON. "
                "Respond with ONLY the JSON, no prose and no code fences.")
 
 
-def _chat_json(model, system, user, validate, attempts=MAX_JSON_ATTEMPTS, chat_fn=_ollama_chat):
+def _chat_json(model, system, user, validate, attempts=MAX_JSON_ATTEMPTS, num_ctx=None,
+               chat_fn=_ollama_chat):
     """Call the model and parse its reply as JSON, retrying with a corrective nudge on
     parse/validate failure. `validate(parsed)` returns the cleaned result or raises to
     trigger a retry. Network errors from chat_fn propagate (NOT retried here).
-    Raises JSONRetryError(last_raw) if no attempt yields valid JSON."""
+    Raises JSONRetryError(last_raw) if no attempt yields valid JSON.
+
+    num_ctx is forwarded only when set, so a chat_fn with the older three-argument
+    signature keeps working."""
+    extra = {} if num_ctx is None else {"num_ctx": num_ctx}
     raw = ""
     for i in range(attempts):
         prompt = user if i == 0 else user + _JSON_NUDGE
-        raw = chat_fn(model, system, prompt)
+        raw = chat_fn(model, system, prompt, **extra)
         cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
         try:
             return validate(json.loads(cleaned))
@@ -479,7 +489,11 @@ def dry_run(cfg, sections, full_text):
           f"{cfg.get('total_points', sum(c['max'] for c in cfg['criteria']))}")
     print(f"Parsed numbered sections: {sorted(sections)}")
     max_chars = int(cfg.get("max_section_chars", DEFAULT_MAX_SECTION_CHARS))
-    print(f"Section text cap: {max_chars} chars\n")
+    num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
+    # ~4 chars/token, less a reserve for the system prompt, criterion and reply.
+    ctx_chars = max(0, (num_ctx - 2500)) * 4
+    note = "" if max_chars <= ctx_chars else f"  ⚠ EXCEEDS num_ctx (fits ~{ctx_chars} chars)"
+    print(f"Section text cap: {max_chars} chars  |  num_ctx: {num_ctx}{note}\n")
     print(f"{'section':>8}  {'found':>5}  {'words':>6}  {'chars':>7}  criterion")
     for crit in cfg["criteria"]:
         body, title = get_body(sections, full_text, crit.get("section"))

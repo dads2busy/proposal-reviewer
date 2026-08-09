@@ -31,8 +31,12 @@ A config is one YAML file per funding opportunity. The engine reads it; you neve
   labels and padded table cells, and only the FIRST match wins, so a stray hit early in the
   document silently anchors the section in the wrong place. Verify with `--dry-run`.
 - `max_section_chars` (optional): per-criterion cap on section text sent to the model.
-  Defaults to 14000. Raise it when `--dry-run` flags `⚠ TRUNCATED`; the ceiling is the
-  engine's `num_ctx` of 16384 tokens, so stay at or under ~40000 chars.
+  Defaults to 14000. Raise it when `--dry-run` flags `⚠ TRUNCATED`.
+- `num_ctx` (optional): Ollama context window, default 16384 tokens. Raise it *with*
+  `max_section_chars` — at roughly 4 chars/token a section that fits the cap but
+  overflows the window is dropped by the model instead of by us, which looks like a
+  confidently wrong score rather than an error. `--dry-run` prints both and flags
+  `⚠ EXCEEDS num_ctx`. 27-32B models run fine at 32768 on a 64GB machine.
 - `rfa_context` (optional): text appended to every criterion prompt for shared framing.
 - `section_groups`: map a section-id prefix → the scored section it rolls up into.
 - `section_totals`: published subtotal per scored section (drives the overall-scores table).

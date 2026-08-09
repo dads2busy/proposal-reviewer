@@ -53,7 +53,9 @@ to IDs with `heading_patterns` rather than falling back to `"*"`:
       - {pattern: '^TA1\.\s[A-Z][a-z]', id: "4.1"}
 
 Section text is capped per criterion at `max_section_chars` (default 14000) to stay
-inside the model context window; `--dry-run` flags any section that would be cut. The model awards `0..max` points per criterion;
+inside the model context window, which `num_ctx` sets (default 16384 tokens). Raise
+the two together — `--dry-run` flags any section that would be cut and warns when the
+cap exceeds what the window can hold. The model awards `0..max` points per criterion;
 section subtotals roll up via `section_groups` / `section_totals`. The `keywords`
 list is a deterministic regex scan for exact, checkable requirements that models
 sometimes gloss (specific platforms, named hubs, required attachments).

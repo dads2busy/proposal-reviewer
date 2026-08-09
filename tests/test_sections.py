@@ -1,8 +1,11 @@
 """Section parsing: config-supplied heading patterns and the body-size cap."""
+import json
 import unittest
+from unittest import mock
 
-from proposal_reviewer import (DEFAULT_MAX_SECTION_CHARS, ask_model,
-                               parse_sections, review_with_model)
+from proposal_reviewer import (DEFAULT_MAX_SECTION_CHARS, DEFAULT_NUM_CTX,
+                               _ollama_chat, ask_model, parse_sections,
+                               review_with_model)
 
 # A proposal whose headings carry no section numbers the numeric pass can see.
 UNNUMBERED = """\
@@ -76,7 +79,7 @@ class TestBodyCap(unittest.TestCase):
     def _capture(self):
         seen = {}
 
-        def fake(model, system, user, timeout=900):
+        def fake(model, system, user, timeout=900, **kw):
             seen["user"] = user
             return '{"awarded": 5, "max": 10, "strengths": [], "gaps": [], "justification": "j"}'
 
@@ -103,3 +106,38 @@ class TestBodyCap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNumCtx(unittest.TestCase):
+    """num_ctx must be configurable: a raised max_section_chars is useless if the
+    section still overflows the model's context window."""
+
+    def _payload(self, **kw):
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["payload"] = json.loads(req.data.decode())
+            raise RuntimeError("stop after capturing payload")
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(RuntimeError):
+                _ollama_chat("m", "sys", "user", **kw)
+        return seen["payload"]
+
+    def test_default_num_ctx(self):
+        self.assertEqual(self._payload()["options"]["num_ctx"], DEFAULT_NUM_CTX)
+
+    def test_num_ctx_can_be_raised(self):
+        self.assertEqual(self._payload(num_ctx=32768)["options"]["num_ctx"], 32768)
+
+    def test_review_with_model_passes_config_num_ctx(self):
+        seen = {}
+
+        def fake(model, system, user, timeout=900, num_ctx=None):
+            seen["num_ctx"] = num_ctx
+            return '{"awarded": 1, "max": 10, "strengths": [], "gaps": [], "justification": "j"}'
+
+        cfg = {"criteria": [{"name": "C", "max": 10, "look_for": "x", "section": "*"}],
+               "num_ctx": 32768}
+        review_with_model("m", cfg, {}, "body", chat_fn=fake)
+        self.assertEqual(seen["num_ctx"], 32768)
