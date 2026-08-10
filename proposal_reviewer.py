@@ -216,18 +216,16 @@ def keyword_scan(text, keywords):
 
 
 # ── recommendation synthesis ────────────────────────────────────────
-REQUIRED_PATTERNS = (
-    "data management plan",
-    "letter of support", "letters of support",
-    "organizational chart", "org chart",
-)
 MISSING_MARKERS = ("not found", "section missing", "missing.", "placeholder", "still need")
 
 
-def is_required_criterion(crit):
-    """True if the criterion hinges on a required attachment the narrative can only reference."""
+def is_required_criterion(crit, required_elements):
+    """True if the criterion hinges on a required attachment the narrative can only
+    reference. `required_elements` comes from the config: which attachments an
+    opportunity mandates is a property of that opportunity, not of the engine.
+    An empty list means the config declares none, and nothing is flagged."""
     text = (crit.get("name", "") + " " + crit.get("look_for", "")).lower()
-    return any(p in text for p in REQUIRED_PATTERNS)
+    return any(p.lower() in text for p in (required_elements or []))
 
 
 def is_missing_result(res):
@@ -246,6 +244,7 @@ def build_recommendation_digest(cfg, models, all_results):
         mx = crit["max"]
         if a["awarded"] < mx and b["awarded"] < mx:
             missing = is_missing_result(a) or is_missing_result(b)
+            required = is_required_criterion(crit, cfg.get("required_elements")) or missing
             digest.append({
                 "section": str(crit.get("section", "")),
                 "name": crit["name"],
@@ -253,7 +252,7 @@ def build_recommendation_digest(cfg, models, all_results):
                 "awarded": [a["awarded"], b["awarded"]],
                 "points_at_stake": (mx - a["awarded"]) + (mx - b["awarded"]),
                 "gaps": (a.get("gaps") or []) + (b.get("gaps") or []),
-                "required": is_required_criterion(crit) or missing,
+                "required": required,
                 "missing": missing,
             })
     return digest
@@ -264,12 +263,22 @@ SYNTH_SYSTEM = (
     "proposal, each with the points at stake. Produce the TOP {n} most important "
     "recommendations to improve the proposal. MERGE related or duplicate gaps from the two "
     "reviewers into a single recommendation. Rank by importance: points at stake is the "
-    "primary signal, but a missing REQUIRED element (data management plan, letters of "
-    "support, organizational chart) or a hard compliance miss may outrank a higher-point "
-    "soft gap. Return FEWER than {n} items if there are fewer real gaps. "
+    "primary signal, but {required_clause}a hard compliance miss may outrank a higher-point "
+    "soft gap. Ground every recommendation in the reviewer gaps supplied below; do NOT "
+    "introduce requirements that do not appear in them. "
+    "Return FEWER than {n} items if there are fewer real gaps. "
     'Respond ONLY with a JSON array; each item: {{"title": <str>, "points_at_stake": <int>, '
     '"criteria": [<str>], "do": <str>, "why": <str>}}'
 )
+
+
+def synthesis_system_prompt(role, n, required_elements):
+    """Build the synthesis system prompt. The REQUIRED-element clause only appears when
+    the config declares such elements — naming examples unconditionally invites the model
+    to recommend them whether or not the solicitation asks for them."""
+    elements = [e for e in (required_elements or []) if e]
+    clause = f"a missing REQUIRED element ({', '.join(elements)}) or " if elements else ""
+    return SYNTH_SYSTEM.format(role=role, n=n, required_clause=clause)
 
 
 def _ollama_chat(model, system_prompt, user_prompt, timeout=900, num_ctx=DEFAULT_NUM_CTX):
@@ -357,7 +366,7 @@ def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
     n = int(cfg.get("top_recommendations", 7))
     model = cfg.get("synthesis_model") or models[0]
     role = cfg.get("reviewer_role", DEFAULT_ROLE)
-    system = SYNTH_SYSTEM.format(role=role, n=n)
+    system = synthesis_system_prompt(role, n, cfg.get("required_elements"))
     user = ("CRITERIA WITH GAPS (ranked candidates):\n" + _digest_to_prompt(digest)
             + f"\n\nReturn the top {n} merged recommendations as a JSON array.")
     def _valid_recs(parsed):

@@ -38,6 +38,13 @@ A config is one YAML file per funding opportunity. The engine reads it; you neve
   confidently wrong score rather than an error. `--dry-run` prints both and flags
   `⚠ EXCEEDS num_ctx`. 27-32B models run fine at 32768 on a 64GB machine.
 - `rfa_context` (optional): text appended to every criterion prompt for shared framing.
+- `required_elements` (optional): attachments this opportunity mandates that the narrative
+  can only reference (e.g. `"letters of support"`). A criterion whose name/`look_for`
+  mentions one is ranked as a hard compliance item, and the list is named in the synthesis
+  prompt. **Declare only what the solicitation actually requires** — these phrases are fed
+  to the model as things a proposal must contain, so an inherited or aspirational entry
+  becomes a confidently-worded recommendation to add something nobody asked for. Omit the
+  key entirely when the opportunity mandates nothing; a missing section is still flagged.
 - `section_groups`: map a section-id prefix → the scored section it rolls up into.
 - `section_totals`: published subtotal per scored section (drives the overall-scores table).
 - `criteria`: list of scored items, each:

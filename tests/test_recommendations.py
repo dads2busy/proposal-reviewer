@@ -7,22 +7,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from proposal_reviewer import is_required_criterion, is_missing_result, build_recommendation_digest
 
 
+# What a NOFO requires is declared by its config; this is the CDC NOFO's list.
+CDC_REQUIRED = ["data management plan", "letter of support", "letters of support",
+                "organizational chart", "org chart"]
+
+
 class TestDetectionHelpers(unittest.TestCase):
     def test_required_detects_data_management_plan(self):
         self.assertTrue(is_required_criterion(
-            {"name": "Eval: data management plan", "look_for": "DMP covering access"}))
+            {"name": "Eval: data management plan", "look_for": "DMP covering access"},
+            CDC_REQUIRED))
 
     def test_required_detects_letter_of_support(self):
         self.assertTrue(is_required_criterion(
-            {"name": "Capacity: collaborations", "look_for": "at least one letter of support"}))
+            {"name": "Capacity: collaborations", "look_for": "at least one letter of support"},
+            CDC_REQUIRED))
 
     def test_required_detects_org_chart(self):
         self.assertTrue(is_required_criterion(
-            {"name": "Project management", "look_for": "organizational chart with roles"}))
+            {"name": "Project management", "look_for": "organizational chart with roles"},
+            CDC_REQUIRED))
 
     def test_required_false_for_plain_criterion(self):
         self.assertFalse(is_required_criterion(
-            {"name": "Background", "look_for": "influenza knowledge and clear problems"}))
+            {"name": "Background", "look_for": "influenza knowledge and clear problems"},
+            CDC_REQUIRED))
 
     def test_missing_true_on_section_missing_justification(self):
         self.assertTrue(is_missing_result(

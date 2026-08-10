@@ -10,6 +10,17 @@ models: ["gemma3:27b", "qwen2.5:32b"]
 # top_recommendations: 7        # size of the ranked "Top recommendations" section
 # synthesis_model: gemma3:27b   # defaults to the first model above if unset
 
+# Attachments this NOFO requires that the narrative can only reference. A criterion
+# whose name/look_for mentions one is treated as a hard compliance item when ranking
+# recommendations. These used to be hardcoded in the engine, which meant every other
+# opportunity inherited CDC's requirements.
+required_elements:
+  - "data management plan"
+  - "letter of support"
+  - "letters of support"
+  - "organizational chart"
+  - "org chart"
+
 # Map a criterion's section-id prefix to the scored section it rolls up into.
 section_groups:
   "1": "Background and approach"
