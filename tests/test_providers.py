@@ -352,5 +352,61 @@ class TestResolveSynthesisSlot(unittest.TestCase):
         self.assertEqual(model, "nosuch:model")
 
 
+from proposal_reviewer import check_providers
+
+
+class TestCheckProviders(unittest.TestCase):
+    """--check-provider answers one question: can THIS machine reach its backends?
+    It must diagnose every slot, so it reports failures instead of raising."""
+
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def test_reports_ok_when_call_succeeds(self):
+        def transport(url, body, headers, timeout):
+            return _reply("pong")
+
+        rows = check_providers(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                               environ={"TEST_KEY": "sk-test"},
+                               transport=transport)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(ok for _, ok, _ in rows))
+
+    def test_reports_failure_detail_without_raising(self):
+        def transport(url, body, headers, timeout):
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+
+        rows = check_providers(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                               environ={"TEST_KEY": "sk-test"},
+                               transport=transport)
+        self.assertFalse(rows[0][1])
+        self.assertIn("HPC node", rows[0][2])
+
+    def test_missing_key_is_reported_not_raised(self):
+        rows = check_providers(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                               environ={}, transport=lambda *a: _reply("x"))
+        self.assertFalse(rows[0][1])
+        self.assertIn("TEST_KEY", rows[0][2])
+
+    def test_a_broken_slot_does_not_hide_a_working_one(self):
+        # Each slot is diagnosed independently: slot 0 is unresolvable, slot 1
+        # is fine, and the report has to show both.
+        def transport(url, body, headers, timeout):
+            return _reply("pong")
+
+        rows = check_providers(self.CFG, ["uva:Kimi K2.5", "gemma3:27b"],
+                               environ={}, transport=transport)
+        self.assertFalse(rows[0][1])
+        self.assertTrue(rows[1][1])
+
+    def test_rows_carry_the_slot_labels(self):
+        rows = check_providers(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                               environ={"TEST_KEY": "sk-test"},
+                               transport=lambda *a: _reply("pong"))
+        self.assertEqual([r[0] for r in rows],
+                         ["uva:Kimi K2.5 (sample 1)", "uva:Kimi K2.5 (sample 2)"])
+
+
 if __name__ == "__main__":
     unittest.main()

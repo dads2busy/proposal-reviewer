@@ -552,6 +552,31 @@ def slot_labels(models):
     return [a, b]
 
 
+def check_providers(cfg, models, environ=None, transport=None):
+    """One cheap call per slot. Returns (label, ok, detail) rows; never raises.
+
+    This is how you confirm a machine can reach its backends — in particular
+    whether it is inside the HPC security zone the UVA API requires. Each slot is
+    resolved separately so one broken backend still reports on the other."""
+    rows = []
+    known = providers.known_provider_names(cfg)
+    labels = slot_labels(models)
+    for label, ref in zip(labels, models):
+        pname, bare = providers.split_model_ref(ref, known)
+        try:
+            fn = providers.make_chat_fn(cfg, pname, environ=environ,
+                                        transport=transport)
+            reply = fn(bare, "Reply with the single word: ok.", "ping",
+                       timeout=60)
+            rows.append((label, True, f"{pname} -> {bare}: "
+                                      f"{reply.strip()[:40] or '(empty reply)'}"))
+        except ProviderError as e:
+            rows.append((label, False, str(e)))
+        except Exception as e:                # report, don't crash: this is a diagnostic
+            rows.append((label, False, f"{type(e).__name__}: {e}"))
+    return rows
+
+
 def is_single_family(cfg, models):
     """True when both ensemble slots resolve to the same provider AND model.
 
@@ -596,10 +621,12 @@ def resolve_synthesis_slot(cfg, slots, environ=None, transport=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("proposal")
+    ap.add_argument("proposal", nargs="?")
     ap.add_argument("--config", required=True)
     ap.add_argument("--models", nargs=2, default=None, metavar=("MODEL_A", "MODEL_B"))
     ap.add_argument("--dry-run", action="store_true", help="Validate config/section mapping without calling models")
+    ap.add_argument("--check-provider", action="store_true",
+                    help="Test connectivity and auth for each configured model, then exit")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).expanduser().read_text())
@@ -608,6 +635,16 @@ def main():
     models = cfg.get("models")
     if not models or len(models) != 2:
         sys.exit("Config must specify exactly two models (or pass --models A B).")
+
+    if args.check_provider:
+        providers.load_dotenv()
+        rows = check_providers(cfg, models)
+        for label, ok, detail in rows:
+            print(f"{'OK  ' if ok else 'FAIL'}  {label}: {detail}")
+        sys.exit(0 if all(ok for _, ok, _ in rows) else 1)
+
+    if not args.proposal:
+        sys.exit("PROPOSAL is required (omit it only with --check-provider).")
 
     path = Path(args.proposal).expanduser()
     full_text = extract_text(path, cfg.get("stop_marker"))
