@@ -523,5 +523,58 @@ class TestStreamingReply(unittest.TestCase):
         self.assertIn("example.invalid", str(ctx.exception))
 
 
+class TestStreamingRobustness(unittest.TestCase):
+    """The SSE reassembler sees whatever the proxy and the upstream model produce.
+    A body it cannot turn into text must raise, never return an empty string: an
+    empty reply reaches the scorer as a genuine 0 with an empty justification."""
+
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def _fn(self, raw):
+        return make_chat_fn(self.CFG, "uva", transport=lambda *a: raw,
+                            environ={"TEST_KEY": "sk-test"}, sleep=lambda s: None)
+
+    def test_stream_opening_with_a_comment_frame_still_parses(self):
+        # Reverse proxies inject ': ping' to hold a long generation open.
+        raw = b": ping\n\n" + _sse(_delta("hello"))
+        self.assertEqual(self._fn(raw)("m", "sys", "user"), "hello")
+
+    def test_stream_opening_with_an_event_line_still_parses(self):
+        raw = b"event: message\n" + _sse(_delta("hello"))
+        self.assertEqual(self._fn(raw)("m", "sys", "user"), "hello")
+
+    def test_error_delivered_as_a_200_stream_raises(self):
+        raw = _sse({"error": {"message": "model overloaded"}})
+        with self.assertRaises(ProviderError) as ctx:
+            self._fn(raw)("m", "sys", "user")
+        self.assertIn("example.invalid", str(ctx.exception))
+
+    def test_stream_with_only_a_done_sentinel_raises(self):
+        with self.assertRaises(ProviderError):
+            self._fn(b"data: [DONE]\n\n")("m", "sys", "user")
+
+    def test_null_content_raises_instead_of_returning_none(self):
+        raw = _json.dumps({"choices": [{"message": {"content": None}}]}).encode()
+        with self.assertRaises(ProviderError):
+            self._fn(raw)("m", "sys", "user")
+
+    def test_non_text_content_raises(self):
+        raw = _json.dumps({"choices": [{"message": {"content": [1, 2]}}]}).encode()
+        with self.assertRaises(ProviderError):
+            self._fn(raw)("m", "sys", "user")
+
+    def test_role_only_frames_do_not_count_as_content(self):
+        raw = _sse({"choices": [{"delta": {"role": "assistant"}}]},
+                   {"choices": [{"finish_reason": "stop", "delta": {}}]})
+        with self.assertRaises(ProviderError):
+            self._fn(raw)("m", "sys", "user")
+
+    def test_whitespace_only_reply_raises(self):
+        with self.assertRaises(ProviderError):
+            self._fn(_sse(_delta("   ")))("m", "sys", "user")
+
+
 if __name__ == "__main__":
     unittest.main()

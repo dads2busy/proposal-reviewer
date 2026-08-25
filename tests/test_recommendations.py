@@ -312,6 +312,34 @@ class TestBuildCombinedIntegration(unittest.TestCase):
                         "## 6. Missing RFA phrases", "## 7. Final"):
             self.assertIn(heading, md)
 
+    def test_local_only_run_is_described_as_offline(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        cfg["models"] = ["gemma3:27b", "qwen2.5:32b"]
+        md = build_combined(cfg, models, results, 100.0, [], recs)
+        self.assertIn("offline (local models)", md)
+
+    def test_remote_run_is_not_described_as_local(self):
+        # This line ends up in a document a PI may forward; it must not claim
+        # a local run when both models were provider-hosted.
+        cfg, models, results, recs = self._cfg_results_recs()
+        cfg["providers"] = {"uva": {"kind": "openai",
+                                    "base_url": "https://example.invalid/api/",
+                                    "api_key_env": "TEST_KEY"}}
+        cfg["models"] = ["uva:Kimi K2.5", "uva:Llama 4"]
+        md = build_combined(cfg, models, results, 100.0, [], recs)
+        self.assertNotIn("offline", md)
+        self.assertNotIn("local models", md)
+
+    def test_hybrid_run_claims_neither_purely_local_nor_purely_remote(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        cfg["providers"] = {"uva": {"kind": "openai",
+                                    "base_url": "https://example.invalid/api/",
+                                    "api_key_env": "TEST_KEY"}}
+        cfg["models"] = ["uva:Kimi K2.5", "qwen2.5:32b"]
+        md = build_combined(cfg, models, results, 100.0, [], recs)
+        self.assertNotIn("offline (local models)", md)
+        self.assertIn("mixed", md)
+
 
 from proposal_reviewer import ask_model
 

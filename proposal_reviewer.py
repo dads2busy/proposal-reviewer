@@ -413,6 +413,26 @@ def section_subtotals(cfg, results):
     return groups
 
 
+def combined_provenance(cfg, single_family):
+    """How the combined report describes where its scores came from.
+
+    Never claim a local run for a provider-hosted one: this line goes into a
+    document a PI may forward, and it is the report's only statement about where
+    the draft was sent."""
+    if single_family:
+        return "single model, two samples"
+    refs = cfg.get("models") or []
+    if not refs:
+        return "two-model ensemble"
+    known = providers.known_provider_names(cfg)
+    kinds = {providers.split_model_ref(r, known)[0] for r in refs}
+    if kinds == {"ollama"}:
+        return "offline (local models)"
+    if "ollama" in kinds:
+        return "mixed local and provider-hosted models"
+    return "provider-hosted models"
+
+
 def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs,
                    single_family=False):
     A, B = models
@@ -424,8 +444,8 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs,
 
     # Two samples of one model agree for reasons that have nothing to do with the
     # proposal being sound, so every heading that implies corroboration is reworded.
+    provenance = combined_provenance(cfg, single_family)
     if single_family:
-        provenance = "single model, two samples"
         per_crit_hd = "Per-criterion scores (★ = unstable score, model is guessing)"
         gaps_hd = "Priority gaps — consistent across both samples (ranked by points at stake)"
         strengths_hd = "Strengths — consistently scored ≥80% of max"
@@ -434,7 +454,6 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs,
                   "consistency, not corroboration. Shared blind spots stay "
                   "invisible here.\n")
     else:
-        provenance = "offline (local models)"
         per_crit_hd = "Per-criterion scores (★ = models diverge ≥2 pts)"
         gaps_hd = "Priority gaps — both models dock points (ranked by points at stake)"
         strengths_hd = "Strengths — both models score ≥80% of max"

@@ -121,16 +121,33 @@ def _parse_reply(raw):
     """Message content from either a single JSON completion or an SSE stream.
 
     UVA's Open WebUI always answers `text/event-stream` and ignores `stream: false`,
-    so the client reassembles the deltas itself. Ollama returns one JSON object."""
+    so the client reassembles the deltas itself. Ollama returns one JSON object.
+
+    Raises ValueError on any body that carries no usable text. That matters more
+    than it looks: an upstream error arriving as HTTP 200 inside a stream frame
+    would otherwise return "", which the scorer records as a genuine 0 with an
+    empty justification and reports as a real gap."""
     text = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
-    if not text.lstrip().startswith("data:"):
-        return json.loads(text)["choices"][0]["message"]["content"]
+
+    # Sniff anywhere, not just at the start — a proxy holding a long generation
+    # open prefixes the stream with ': keep-alive' comment or 'event:' frames.
+    frames = [ln.strip()[len("data:"):].strip()
+              for ln in text.splitlines() if ln.strip().startswith("data:")]
+
+    if not frames:
+        try:
+            content = json.loads(text)["choices"][0]["message"]["content"]
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "the body is neither JSON nor an SSE stream; an HTML body "
+                "usually means a login page rather than an API response") from e
+        if not isinstance(content, str):
+            raise ValueError(f"message content was "
+                             f"{type(content).__name__}, not text")
+        return content
+
     parts = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("data:"):
-            continue
-        payload = line[len("data:"):].strip()
+    for payload in frames:
         if not payload or payload == "[DONE]":
             continue
         try:
@@ -138,10 +155,22 @@ def _parse_reply(raw):
         except json.JSONDecodeError:
             continue                      # keep-alive or comment frame
         for choice in chunk.get("choices") or []:
-            piece = ((choice.get("delta") or {}).get("content")
-                     or (choice.get("message") or {}).get("content") or "")
+            piece = (choice.get("delta") or {}).get("content")
+            if piece is None:
+                piece = (choice.get("message") or {}).get("content")
+            if piece is None:
+                continue                  # role-only or finish_reason frame
+            if not isinstance(piece, str):
+                raise ValueError(f"a stream frame carried "
+                                 f"{type(piece).__name__} content, not text")
             parts.append(piece)
-    return "".join(parts)
+
+    joined = "".join(parts)
+    if not joined.strip():
+        raise ValueError(
+            "the stream carried no message content — an upstream error is "
+            "often delivered this way, with HTTP 200")
+    return joined
 
 
 def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
@@ -188,14 +217,19 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                 raw = transport(url, body, dict(headers), timeout)
                 try:
                     return _parse_reply(raw)
-                except (json.JSONDecodeError, KeyError, IndexError,
-                        TypeError, AttributeError, UnicodeDecodeError) as e:
+                except ValueError as e:   # includes json.JSONDecodeError
                     excerpt = (raw[:120] if isinstance(raw, (bytes, bytearray))
                                else str(raw)[:120])
                     raise ProviderError(
                         f"{provider_name}: {host} returned a reply this client "
-                        f"could not parse ({type(e).__name__}). An HTML body here "
-                        f"usually means a login page, not an API response. "
+                        f"could not use — {e}. First bytes: {excerpt!r}") from e
+                except (KeyError, IndexError, TypeError, AttributeError,
+                        UnicodeDecodeError) as e:
+                    excerpt = (raw[:120] if isinstance(raw, (bytes, bytearray))
+                               else str(raw)[:120])
+                    raise ProviderError(
+                        f"{provider_name}: {host} returned an unrecognized "
+                        f"response shape ({type(e).__name__}). "
                         f"First bytes: {excerpt!r}") from e
             except urllib.error.HTTPError as e:
                 if e.code == 401:
