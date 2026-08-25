@@ -532,6 +532,17 @@ def slot_labels(models):
     return [a, b]
 
 
+def is_single_family(cfg, models):
+    """True when both ensemble slots resolve to the same provider AND model.
+
+    Two samples of one model are a reliability check, not two independent
+    opinions — the combined report must not claim corroboration."""
+    known = providers.known_provider_names(cfg)
+    a = providers.split_model_ref(models[0], known)
+    b = providers.split_model_ref(models[1], known)
+    return a == b
+
+
 def resolve_chat_fns(cfg, models, environ=None, temperatures=(0.2, 0.2),
                      transport=None):
     """One (label, bare_model, chat_fn) per ensemble slot, in order.
@@ -591,8 +602,13 @@ def main():
     num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
 
     providers.load_dotenv()
+    # At 0.2 two samples of one model risk being near-identical, which makes the
+    # second call pure cost. Sampling wider is what makes "is this score stable?"
+    # a real question.
+    single = is_single_family(cfg, models)
+    temps = (0.2, 0.6) if single else (0.2, 0.2)
     try:
-        slots = resolve_chat_fns(cfg, models)
+        slots = resolve_chat_fns(cfg, models, temperatures=temps)
         synth_model, synth_fn = resolve_synthesis_slot(cfg, slots)
     except ProviderError as e:
         sys.exit(str(e))
