@@ -272,5 +272,85 @@ class TestSynthesizeRecommendationsNumCtx(unittest.TestCase):
         self.assertEqual(seen["num_ctx"], 32768)
 
 
+class TestTemperatureThreading(unittest.TestCase):
+    """The second sample is only worth paying for if it actually samples wider,
+    so the temperature per slot has to reach the wire."""
+
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def test_each_slots_temperature_reaches_the_payload(self):
+        seen = []
+
+        def transport(url, body, headers, timeout):
+            seen.append(_json.loads(body.decode())["temperature"])
+            return _json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+
+        slots = resolve_chat_fns(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                                 environ={"TEST_KEY": "sk-test"},
+                                 temperatures=(0.2, 0.6), transport=transport)
+        for _, bare, fn in slots:
+            fn(bare, "sys", "user")
+        self.assertEqual(seen, [0.2, 0.6])
+
+
+from proposal_reviewer import resolve_synthesis_slot
+
+
+class TestResolveSynthesisSlot(unittest.TestCase):
+    """`synthesis_model` is a documented config key; main() must honor it rather
+    than always reusing slot 0."""
+
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def _slots(self):
+        return resolve_chat_fns(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                                environ={"TEST_KEY": "sk-test"})
+
+    def test_defaults_to_the_first_ensemble_slot(self):
+        slots = self._slots()
+        model, fn = resolve_synthesis_slot(self.CFG, slots,
+                                           environ={"TEST_KEY": "sk-test"})
+        self.assertEqual(model, "Kimi K2.5")
+        self.assertIs(fn, slots[0][2])
+
+    def test_config_synthesis_model_overrides_slot_zero(self):
+        cfg = dict(self.CFG, synthesis_model="gemma3:27b")
+        slots = self._slots()
+        model, fn = resolve_synthesis_slot(cfg, slots,
+                                           environ={"TEST_KEY": "sk-test"})
+        self.assertEqual(model, "gemma3:27b")
+        self.assertIsNot(fn, slots[0][2])
+
+    def test_synthesis_model_is_posted_to_its_own_provider(self):
+        # A bare model name must not be sent to slot 0's remote endpoint.
+        cfg = dict(self.CFG, synthesis_model="gemma3:27b")
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen["url"] = url
+            seen["auth"] = "Authorization" in headers
+            return _json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+
+        slots = self._slots()
+        model, fn = resolve_synthesis_slot(cfg, slots,
+                                           environ={"TEST_KEY": "sk-test"},
+                                           transport=transport)
+        fn(model, "sys", "user")
+        self.assertIn("localhost:11434", seen["url"])
+        self.assertFalse(seen["auth"])
+
+    def test_unknown_synthesis_provider_raises(self):
+        cfg = dict(self.CFG, synthesis_model="nosuch:model")
+        # 'nosuch' is not a known provider, so this is an Ollama model name and
+        # must resolve cleanly rather than exploding.
+        model, _ = resolve_synthesis_slot(cfg, self._slots(),
+                                          environ={"TEST_KEY": "sk-test"})
+        self.assertEqual(model, "nosuch:model")
+
+
 if __name__ == "__main__":
     unittest.main()

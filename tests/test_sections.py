@@ -141,3 +141,30 @@ class TestNumCtx(unittest.TestCase):
                "num_ctx": 32768}
         review_with_model("m", cfg, {}, "body", chat_fn=fake)
         self.assertEqual(seen["num_ctx"], 32768)
+
+
+class TestReportHeader(unittest.TestCase):
+    """A per-model report has to name the slot it came from: 'local' is false for
+    a remote provider, and two samples of one model need distinguishing."""
+
+    CFG = {"criteria": [{"name": "C", "max": 10, "look_for": "x", "section": "*"}]}
+
+    def _fake(self, model, system, user, timeout=900, num_ctx=None):
+        return '{"awarded": 1, "max": 10, "strengths": [], "gaps": [], "justification": "j"}'
+
+    def test_header_uses_the_slot_label_when_given(self):
+        _, report = review_with_model("Kimi K2.5", self.CFG, {}, "body",
+                                      chat_fn=self._fake,
+                                      label="uva:Kimi K2.5 (sample 2)")
+        self.assertIn("# Compliance Assessment \u2014 uva:Kimi K2.5 (sample 2)", report)
+
+    def test_header_does_not_claim_local_for_a_remote_model(self):
+        _, report = review_with_model("Kimi K2.5", self.CFG, {}, "body",
+                                      chat_fn=self._fake,
+                                      label="uva:Kimi K2.5")
+        self.assertNotIn("(local)", report)
+
+    def test_header_falls_back_to_the_model_name(self):
+        _, report = review_with_model("gemma3:27b", self.CFG, {}, "body",
+                                      chat_fn=self._fake)
+        self.assertIn("# Compliance Assessment \u2014 gemma3:27b", report)

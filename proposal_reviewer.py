@@ -172,14 +172,17 @@ def ask_model(model, system_prompt, crit, sect_title, body, rfa_context="",
                 "justification": "UNPARSED MODEL OUTPUT:\n" + e.raw}
 
 
-def review_with_model(model, cfg, sections, full_text, chat_fn=None):
+def review_with_model(model, cfg, sections, full_text, chat_fn=None, label=None):
     role = cfg.get("reviewer_role", DEFAULT_ROLE)
     system_prompt = cfg.get("system_prompt") or SYSTEM_TEMPLATE.format(role=role)
     rfa_context = cfg.get("rfa_context", "")
     max_chars = int(cfg.get("max_section_chars", DEFAULT_MAX_SECTION_CHARS))
     num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
     results = []
-    lines = [f"# Compliance Assessment — {model} (local)\n", f"_Generated {datetime.date.today()}_\n"]
+    # Display name only: the slot label distinguishes two samples of one model,
+    # and not every provider is local any more.
+    lines = [f"# Compliance Assessment — {label or model}\n",
+             f"_Generated {datetime.date.today()}_\n"]
     for crit in cfg["criteria"]:
         body, title = get_body(sections, full_text, crit.get("section"))
         if not body:
@@ -529,7 +532,8 @@ def slot_labels(models):
     return [a, b]
 
 
-def resolve_chat_fns(cfg, models, environ=None, temperatures=(0.2, 0.2)):
+def resolve_chat_fns(cfg, models, environ=None, temperatures=(0.2, 0.2),
+                     transport=None):
     """One (label, bare_model, chat_fn) per ensemble slot, in order.
 
     The label is the display/results key; the bare model is what gets sent to
@@ -540,9 +544,23 @@ def resolve_chat_fns(cfg, models, environ=None, temperatures=(0.2, 0.2)):
     for i, ref in enumerate(models):
         pname, bare = providers.split_model_ref(ref, known)
         fn = providers.make_chat_fn(cfg, pname, temperature=temperatures[i],
-                                    environ=environ)
+                                    environ=environ, transport=transport)
         slots.append((labels[i], bare, fn))
     return slots
+
+
+def resolve_synthesis_slot(cfg, slots, environ=None, transport=None):
+    """(bare_model, chat_fn) for the synthesis call.
+
+    `synthesis_model` may name any provider, so it gets its own chat_fn rather
+    than borrowing slot 0's — otherwise a local model named there would be
+    posted to slot 0's remote endpoint. Unset, slot 0 writes the synthesis."""
+    ref = cfg.get("synthesis_model")
+    if not ref:
+        return slots[0][1], slots[0][2]
+    pname, bare = providers.split_model_ref(ref, providers.known_provider_names(cfg))
+    return bare, providers.make_chat_fn(cfg, pname, environ=environ,
+                                        transport=transport)
 
 
 def main():
@@ -575,6 +593,7 @@ def main():
     providers.load_dotenv()
     try:
         slots = resolve_chat_fns(cfg, models)
+        synth_model, synth_fn = resolve_synthesis_slot(cfg, slots)
     except ProviderError as e:
         sys.exit(str(e))
 
@@ -583,7 +602,7 @@ def main():
         print(f"Reviewing with {label} ...", file=sys.stderr)
         try:
             res, report = review_with_model(bare, cfg, sections, full_text,
-                                            chat_fn=chat_fn)
+                                            chat_fn=chat_fn, label=label)
         except ProviderError as e:
             sys.exit(str(e))
         all_results[label] = res
@@ -597,7 +616,7 @@ def main():
 
     print("Synthesizing recommendations ...", file=sys.stderr)
     recs = synthesize_recommendations(cfg, labels, all_results,
-                                      chat_fn=slots[0][2], synth_model=slots[0][1],
+                                      chat_fn=synth_fn, synth_model=synth_model,
                                       num_ctx=num_ctx)
     combined = build_combined(cfg, labels, all_results, kw_pct, kw_missing, recs)
     cpath = outdir / stamped("compliance_report_combined", ts, "md")
