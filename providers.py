@@ -41,3 +41,47 @@ def load_dotenv(path=None, environ=None):
             environ[key] = value
             n += 1
     return n
+
+
+BUILTIN_PROVIDERS = {
+    "ollama": {"kind": "ollama", "base_url": "http://localhost:11434/v1/"},
+}
+
+
+class ProviderError(Exception):
+    """Configuration or connectivity problem with a model backend."""
+
+
+def known_provider_names(cfg):
+    """Provider names this config can resolve: declared ones plus builtins."""
+    return set(BUILTIN_PROVIDERS) | set((cfg or {}).get("providers") or {})
+
+
+def split_model_ref(ref, known):
+    """'uva:Kimi K2.5' -> ('uva', 'Kimi K2.5').
+
+    A prefix only counts as a provider when it names a known one — otherwise
+    the whole string is an Ollama model, so 'qwen2.5:32b' stays intact."""
+    prefix, sep, rest = ref.partition(":")
+    if sep and prefix in known:
+        return prefix, rest
+    return "ollama", ref
+
+
+def provider_spec(cfg, name):
+    """Merged spec for a provider. Raises ProviderError on unknown names or on
+    a literal key in the config."""
+    declared = ((cfg or {}).get("providers") or {}).get(name)
+    if declared is None and name not in BUILTIN_PROVIDERS:
+        available = ", ".join(sorted(known_provider_names(cfg)))
+        raise ProviderError(
+            f"Unknown provider {name!r}. Declare it under `providers:` in the "
+            f"config, or use one of: {available}")
+    spec = dict(BUILTIN_PROVIDERS.get(name, {}))
+    spec.update(declared or {})
+    if "api_key" in spec:
+        raise ProviderError(
+            f"Provider {name!r} sets `api_key` directly. Configs are committed "
+            f"to git, so keys must not live in them. Use `api_key_env: VARNAME` "
+            f"and put the value in .env instead.")
+    return spec
