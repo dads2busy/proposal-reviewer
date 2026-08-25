@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -106,6 +107,105 @@ class TestModelRefs(unittest.TestCase):
         with self.assertRaises(ProviderError) as ctx:
             provider_spec(cfg, "bad")
         self.assertIn(".env", str(ctx.exception))
+
+
+import json as _json
+from providers import make_chat_fn
+
+
+def _reply(text):
+    return _json.dumps({"choices": [{"message": {"content": text}}]}).encode()
+
+
+class TestMakeChatFn(unittest.TestCase):
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def test_openai_posts_expected_payload_and_header(self):
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen["url"] = url
+            seen["body"] = _json.loads(body)
+            seen["headers"] = headers
+            return _reply("hello")
+
+        fn = make_chat_fn(self.CFG, "uva", transport=transport,
+                          environ={"TEST_KEY": "sk-test"})
+        out = fn("Kimi K2.5", "sys", "user", num_ctx=32768)
+
+        self.assertEqual(out, "hello")
+        self.assertEqual(seen["url"], "https://example.invalid/api/chat/completions")
+        self.assertEqual(seen["headers"]["Authorization"], "Bearer sk-test")
+        self.assertEqual(seen["body"]["model"], "Kimi K2.5")
+        self.assertEqual(seen["body"]["messages"][0]["role"], "system")
+        self.assertNotIn("options", seen["body"])   # num_ctx is Ollama-only
+
+    def test_openai_temperature_is_configurable(self):
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen.update(_json.loads(body))
+            return _reply("ok")
+
+        fn = make_chat_fn(self.CFG, "uva", temperature=0.6, transport=transport,
+                          environ={"TEST_KEY": "sk-test"})
+        fn("Kimi K2.5", "sys", "user")
+        self.assertEqual(seen["temperature"], 0.6)
+
+    def test_ollama_includes_num_ctx(self):
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen.update(_json.loads(body))
+            return _reply("ok")
+
+        fn = make_chat_fn({}, "ollama", transport=transport, environ={})
+        fn("gemma3:27b", "sys", "user", num_ctx=16384)
+        self.assertEqual(seen["options"]["num_ctx"], 16384)
+
+    def test_missing_key_raises_before_network(self):
+        def transport(*a, **k):
+            raise AssertionError("should not reach the network")
+
+        with self.assertRaises(ProviderError) as ctx:
+            make_chat_fn(self.CFG, "uva", transport=transport, environ={})
+        self.assertIn("TEST_KEY", str(ctx.exception))
+
+    def test_401_message_mentions_hpc_node(self):
+        def transport(url, body, headers, timeout):
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+
+        fn = make_chat_fn(self.CFG, "uva", transport=transport,
+                          environ={"TEST_KEY": "sk-test"})
+        with self.assertRaises(ProviderError) as ctx:
+            fn("Kimi K2.5", "sys", "user")
+        self.assertIn("HPC node", str(ctx.exception))
+
+    def test_429_retries_then_succeeds(self):
+        calls = []
+
+        def transport(url, body, headers, timeout):
+            calls.append(1)
+            if len(calls) < 3:
+                raise urllib.error.HTTPError(url, 429, "Too Many", {}, None)
+            return _reply("finally")
+
+        fn = make_chat_fn(self.CFG, "uva", transport=transport,
+                          environ={"TEST_KEY": "sk-test"}, sleep=lambda s: None)
+        self.assertEqual(fn("Kimi K2.5", "sys", "user"), "finally")
+        self.assertEqual(len(calls), 3)
+
+    def test_connection_error_names_the_host(self):
+        def transport(url, body, headers, timeout):
+            raise urllib.error.URLError("refused")
+
+        fn = make_chat_fn(self.CFG, "uva", transport=transport,
+                          environ={"TEST_KEY": "sk-test"}, sleep=lambda s: None)
+        with self.assertRaises(ProviderError) as ctx:
+            fn("Kimi K2.5", "sys", "user")
+        self.assertIn("example.invalid", str(ctx.exception))
 
 
 if __name__ == "__main__":

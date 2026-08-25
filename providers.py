@@ -85,3 +85,83 @@ def provider_spec(cfg, name):
             f"to git, so keys must not live in them. Use `api_key_env: VARNAME` "
             f"and put the value in .env instead.")
     return spec
+
+
+MAX_HTTP_ATTEMPTS = 3
+
+
+def _urllib_transport(url, body, headers, timeout):
+    req = urllib.request.Request(url, data=body, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
+                 environ=None, sleep=None):
+    """Build a chat callable for one provider.
+
+    Returned signature is (model, system_prompt, user_prompt, timeout=900,
+    num_ctx=None) -> str, matching what _chat_json expects."""
+    spec = provider_spec(cfg, provider_name)
+    transport = transport or _urllib_transport
+    environ = os.environ if environ is None else environ
+    sleep = sleep or time.sleep
+    kind = spec.get("kind", "ollama")
+    base = spec.get("base_url", "")
+    if not base.endswith("/"):
+        base += "/"
+    url = base + "chat/completions"
+    host = re.sub(r"^https?://([^/]+).*$", r"\1", base)
+
+    headers = {"Content-Type": "application/json"}
+    if kind == "openai":
+        var = spec.get("api_key_env")
+        if not var:
+            raise ProviderError(
+                f"Provider {provider_name!r} is kind 'openai' but sets no "
+                f"`api_key_env`.")
+        key = (environ.get(var) or "").strip()
+        if not key:
+            raise ProviderError(
+                f"Provider {provider_name!r} needs ${var}, which is unset or "
+                f"empty. Put it in .env (see .env.example) or export it.")
+        headers["Authorization"] = f"Bearer {key}"
+
+    def chat(model, system_prompt, user_prompt, timeout=900, num_ctx=None):
+        payload = {"model": model, "temperature": temperature,
+                   "messages": [{"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}]}
+        if kind == "ollama" and num_ctx is not None:
+            payload["options"] = {"num_ctx": num_ctx}
+        body = json.dumps(payload).encode()
+
+        for attempt in range(MAX_HTTP_ATTEMPTS):
+            try:
+                raw = transport(url, body, dict(headers), timeout)
+                return json.loads(raw)["choices"][0]["message"]["content"]
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    raise ProviderError(
+                        f"{provider_name}: key rejected by {host} (HTTP 401). "
+                        f"Check the value in .env — and confirm you are on an "
+                        f"HPC node: this API returns 401 from a VPN-connected "
+                        f"laptop even with a valid key.") from e
+                if e.code == 429 and attempt < MAX_HTTP_ATTEMPTS - 1:
+                    sleep(2 ** attempt)
+                    continue
+                if e.code == 429:
+                    raise ProviderError(
+                        f"{provider_name}: rate limited by {host} after "
+                        f"{MAX_HTTP_ATTEMPTS} attempts (HTTP 429).") from e
+                if e.code >= 500 and attempt < MAX_HTTP_ATTEMPTS - 1:
+                    sleep(2 ** attempt)
+                    continue
+                raise ProviderError(
+                    f"{provider_name}: {host} returned HTTP {e.code}.") from e
+            except urllib.error.URLError as e:
+                raise ProviderError(
+                    f"{provider_name}: cannot reach {host} ({e.reason}). "
+                    f"On an HPC node? Is Ollama running?") from e
+        raise ProviderError(f"{provider_name}: exhausted retries against {host}.")
+
+    return chat
