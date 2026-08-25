@@ -286,6 +286,32 @@ class TestBuildCombinedIntegration(unittest.TestCase):
         self.assertIn("### 1. Fix Background", md)
         self.assertIn("## 7. Final", md)
 
+    def test_default_wording_claims_two_models(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        md = build_combined(cfg, models, results, 100.0, [], recs)
+        self.assertIn("both models dock points", md)
+        self.assertIn("models diverge", md)
+        self.assertNotIn("No independent second opinion", md)
+
+    def test_single_family_relabels_and_warns(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        md = build_combined(cfg, models, results, 100.0, [], recs,
+                            single_family=True)
+        self.assertIn("consistent across both samples", md)
+        self.assertIn("unstable score", md)
+        self.assertIn("consistently scored", md)
+        self.assertIn("No independent second opinion", md)
+        self.assertNotIn("both models dock points", md)
+
+    def test_single_family_keeps_section_numbering(self):
+        cfg, models, results, recs = self._cfg_results_recs()
+        md = build_combined(cfg, models, results, 100.0, [], recs,
+                            single_family=True)
+        for heading in ("## 1. Overall scores", "## 3. Per-criterion",
+                        "## 4. Priority gaps", "## 5. Strengths",
+                        "## 6. Missing RFA phrases", "## 7. Final"):
+            self.assertIn(heading, md)
+
 
 from proposal_reviewer import ask_model
 

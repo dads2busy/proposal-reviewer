@@ -410,7 +410,8 @@ def section_subtotals(cfg, results):
     return groups
 
 
-def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs):
+def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs,
+                   single_family=False):
     A, B = models
     ra, rb = all_results[A], all_results[B]
     ga, gb = section_subtotals(cfg, ra), section_subtotals(cfg, rb)
@@ -418,8 +419,27 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs):
     total = cfg.get("total_points", sum(c["max"] for c in cfg["criteria"]))
     section_totals = cfg.get("section_totals") or {g: ga[g][1] for g in ga}
 
+    # Two samples of one model agree for reasons that have nothing to do with the
+    # proposal being sound, so every heading that implies corroboration is reworded.
+    if single_family:
+        provenance = "single model, two samples"
+        per_crit_hd = "Per-criterion scores (★ = unstable score, model is guessing)"
+        gaps_hd = "Priority gaps — consistent across both samples (ranked by points at stake)"
+        strengths_hd = "Strengths — consistently scored ≥80% of max"
+        banner = ("\n> **No independent second opinion.** Both columns are the same "
+                  "model sampled twice, so agreement between them reflects "
+                  "consistency, not corroboration. Shared blind spots stay "
+                  "invisible here.\n")
+    else:
+        provenance = "offline (local models)"
+        per_crit_hd = "Per-criterion scores (★ = models diverge ≥2 pts)"
+        gaps_hd = "Priority gaps — both models dock points (ranked by points at stake)"
+        strengths_hd = "Strengths — both models score ≥80% of max"
+        banner = ""
+
     L = [f"# Combined Compliance Assessment: {A} vs {B}",
-         f"\n_{cfg.get('name','')} — generated {datetime.date.today()}, offline (local models)._\n",
+         f"\n_{cfg.get('name','')} — generated {datetime.date.today()}, {provenance}._\n",
+         banner,
          "---\n## 1. Overall scores\n", f"| Section | {A} | {B} |", "|---|---|---|"]
     for sec, mx in section_totals.items():
         L.append(f"| {sec} | **{ga.get(sec,[0,0])[0]}/{mx}** | **{gb.get(sec,[0,0])[0]}/{mx}** |")
@@ -428,7 +448,7 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs):
 
     L.append(render_recommendations(recs))
 
-    L.append("\n## 3. Per-criterion scores (★ = models diverge ≥2 pts)\n")
+    L.append(f"\n## 3. {per_crit_hd}\n")
     L += ["| Criterion | Max | " + A + " | " + B + " |", "|---|---|---|---|"]
     for crit, x, y in zip(cfg["criteria"], ra, rb):
         flag = " ★" if abs(x["awarded"] - y["awarded"]) >= 2 else ""
@@ -440,14 +460,14 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs):
             lost = (crit["max"] - x["awarded"]) + (crit["max"] - y["awarded"])
             gaps.append((lost, crit, x, y))
     gaps.sort(key=lambda t: t[0], reverse=True)
-    L.append("\n## 4. Priority gaps — both models dock points (ranked by points at stake)\n")
+    L.append(f"\n## 4. {gaps_hd}\n")
     for lost, crit, x, y in gaps:
         L.append(f"\n### {crit['name']} — {A} {x['awarded']}/{crit['max']}, {B} {y['awarded']}/{crit['max']}  (−{lost})")
         for who, r in ((A, x), (B, y)):
             for g in r.get("gaps", []):
                 L.append(f"- _{who}:_ {g}")
 
-    L.append("\n## 5. Strengths — both models score ≥80% of max\n")
+    L.append(f"\n## 5. {strengths_hd}\n")
     for crit, x, y in zip(cfg["criteria"], ra, rb):
         if x["awarded"] >= 0.8 * crit["max"] and y["awarded"] >= 0.8 * crit["max"]:
             strs = (x.get("strengths") or []) + (y.get("strengths") or [])
@@ -634,7 +654,8 @@ def main():
     recs = synthesize_recommendations(cfg, labels, all_results,
                                       chat_fn=synth_fn, synth_model=synth_model,
                                       num_ctx=num_ctx)
-    combined = build_combined(cfg, labels, all_results, kw_pct, kw_missing, recs)
+    combined = build_combined(cfg, labels, all_results, kw_pct, kw_missing, recs,
+                              single_family=single)
     cpath = outdir / stamped("compliance_report_combined", ts, "md")
     cpath.write_text(combined)
     rendered = render(cpath)
