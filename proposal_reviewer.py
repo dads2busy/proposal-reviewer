@@ -520,6 +520,18 @@ def stamped(base, ts, ext):
     return f"{base}_{ts}.{ext}"
 
 
+def slot_labels(models):
+    """Distinct display keys for the two ensemble slots.
+
+    Results are keyed by label, so two samples of the same model must not
+    collide — otherwise the second overwrites the first and the combined
+    report compares a result against itself."""
+    a, b = models
+    if a == b:
+        return [f"{a} (sample 1)", f"{b} (sample 2)"]
+    return [a, b]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("proposal")
