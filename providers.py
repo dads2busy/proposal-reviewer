@@ -15,6 +15,26 @@ from pathlib import Path
 DEFAULT_ENV_PATH = Path(__file__).resolve().parent / ".env"
 
 
+def _harden(path):
+    """chmod 600 a .env others can read, and say so on the way.
+
+    A key leaked through file permissions leaked as thoroughly as one committed
+    to git, and a shared HPC filesystem makes a group-readable key a real
+    exposure rather than a theoretical one."""
+    try:
+        mode = path.stat().st_mode & 0o777
+    except OSError:
+        return
+    if not mode & 0o077:
+        return
+    print(f"warning: {path} is readable by others (mode {mode:03o}); "
+          f"tightening to 600.", file=sys.stderr)
+    try:
+        path.chmod(0o600)
+    except OSError as e:
+        print(f"warning: could not chmod {path}: {e}", file=sys.stderr)
+
+
 def load_dotenv(path=None, environ=None):
     """Load KEY=value pairs from a .env file into `environ`.
 
@@ -25,6 +45,7 @@ def load_dotenv(path=None, environ=None):
     environ = os.environ if environ is None else environ
     if not path.exists():
         return 0
+    _harden(path)
     n = 0
     for line in path.read_text().splitlines():
         line = line.strip()

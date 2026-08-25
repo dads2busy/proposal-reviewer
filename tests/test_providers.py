@@ -13,6 +13,7 @@ class TestLoadDotenv(unittest.TestCase):
     def _write(self, text):
         p = Path(self.tmp) / ".env"
         p.write_text(text)
+        p.chmod(0o600)          # the normal, secure state; see TestEnvPermissions
         return p
 
     def setUp(self):
@@ -406,6 +407,70 @@ class TestCheckProviders(unittest.TestCase):
                                transport=lambda *a: _reply("pong"))
         self.assertEqual([r[0] for r in rows],
                          ["uva:Kimi K2.5 (sample 1)", "uva:Kimi K2.5 (sample 2)"])
+
+
+import io
+import contextlib
+
+
+class TestEnvPermissions(unittest.TestCase):
+    """A key leaked through file permissions leaked as thoroughly as one committed
+    to git. .env holds a real secret, so loading it hardens it."""
+
+    def setUp(self):
+        import tempfile
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = self._td.name
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _env(self, mode):
+        p = Path(self.tmp) / ".env"
+        p.write_text("FOO=bar\n")
+        p.chmod(mode)
+        return p
+
+    def _load(self, p):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            load_dotenv(p, {})
+        return err.getvalue()
+
+    def test_group_readable_env_is_tightened_to_600(self):
+        p = self._env(0o640)
+        self._load(p)
+        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+
+    def test_world_readable_env_is_tightened_to_600(self):
+        p = self._env(0o644)
+        self._load(p)
+        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+
+    def test_loose_permissions_are_reported(self):
+        p = self._env(0o644)
+        msg = self._load(p)
+        self.assertIn(str(p), msg)
+        self.assertIn("644", msg)
+
+    def test_values_still_load_after_hardening(self):
+        p = self._env(0o644)
+        env = {}
+        with contextlib.redirect_stderr(io.StringIO()):
+            load_dotenv(p, env)
+        self.assertEqual(env["FOO"], "bar")
+
+    def test_private_env_is_left_alone_and_silent(self):
+        p = self._env(0o600)
+        self.assertEqual(self._load(p), "")
+        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+
+    def test_missing_file_needs_no_permission_work(self):
+        missing = Path(self.tmp) / "nope"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(load_dotenv(missing, {}), 0)
+        self.assertEqual(err.getvalue(), "")
 
 
 if __name__ == "__main__":
