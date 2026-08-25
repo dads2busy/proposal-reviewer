@@ -1,0 +1,395 @@
+# EXAMPLE: a UVA RC GenAI config. The criteria below are copied wholesale from
+# configs/arpa-h-igor.yaml so the file is runnable as-is — retarget them at your own
+# opportunity. What this file exists to demonstrate is the `providers:` block and the
+# `uva:` model prefix.
+#
+# UVA hosts a single model, so both ensemble slots hold the same one. The engine
+# detects that (is_single_family) and relabels the combined report: two samples of one
+# model measure whether a score is STABLE, not whether two reviewers agree. It also
+# widens the second sample's temperature to 0.6 so the second call is worth its cost.
+#
+# The key never lives here. `api_key_env` names an environment variable; put the value
+# in .env (gitignored, and chmod 600'd on read). A literal `api_key:` is rejected.
+#
+# This API answers only from an HPC node — a VPN-connected laptop gets HTTP 401 even
+# with a valid key. Confirm any machine with:
+#     python proposal_reviewer.py --config configs/uva-kimi-example.yaml --check-provider
+
+# ARPA-H IGoR (Intelligent Generator of Research) — Innovative Solutions Opening.
+#
+# Two things about this opportunity shape the config:
+#
+# 1. ARPA-H publishes NO point values. Appendix C §2.5 lists four criteria "in
+#    descending order of importance" only. The caps below (54/30/20) encode that
+#    ordering; they are our weighting, not ARPA-H's. Read subtotals as relative
+#    emphasis, not as a predicted score.
+# 2. Criterion 4 (Assessment of Proposed Cost/Price) is DELIBERATELY OMITTED. It is
+#    evaluated against the Cost Proposal (Appendix C.3), which is not part of the
+#    Technical & Management Proposal. Scoring it from the narrative would invent a
+#    number. Review the cost volume separately.
+#
+# The draft follows Appendix C.1's outline, whose subheadings carry no section
+# numbers ("TA1. ...", "System architecture and interfaces ..."), so heading_patterns
+# below assigns the IDs the criteria target.
+#
+# INPUT DOCUMENT. Run against SPIRALE_review_input.md, which build_review_input.py
+# assembles from the three proposal files: the Technical Proposal narrative, plus the
+# Gantt as section 10 and a TDD digest as section 11. Sections 10 and 11 exist because
+# proposal_reviewer.py reviews one file and the TDD is ~48k words of tables; they are
+# separate sections because together they exceed max_section_chars.
+#
+# The 15 narrative criteria keep the caps they had when this config scored the
+# technical proposal alone, so their scores stay comparable across runs. The TDD
+# criterion is additive, which is why the total is 104 rather than 100 — compare runs
+# by percentage.
+
+name: "ARPA-H IGoR — Technical & Management Proposal"
+total_points: 104
+reviewer_role: >
+  an ARPA-H scientific and technical reviewer evaluating a proposal to the IGoR
+  Innovative Solutions Opening, judging each criterion strictly on its own merits
+  against the ISO rather than against other proposals
+providers:
+  uva:
+    kind: openai
+    base_url: https://open-webui.rc.virginia.edu/api/
+    api_key_env: UVARC_GenAI_API
+
+models: ["uva:Kimi K2.5", "uva:Kimi K2.5"]
+
+# References Cited is unlimited-length and would otherwise be absorbed by the last
+# scored section. The leading "# " matches pandoc's heading, not the TOC entry, which
+# starts with "[". (For a pdftotext source the marker was "9. REFERENCES CITED".)
+stop_marker: "# 9. References Cited"
+
+# TA sections run 22-38k characters and the TDD digest (section 11) is ~61k, so the
+# 14k default would cut TA1-TA4 in half and show the TDD criterion two thirds of the
+# tasks it is meant to judge for completeness. 64k chars is ~16k tokens, which needs
+# num_ctx above the 16384 default; both configured models run comfortably at 32768.
+max_section_chars: 64000
+num_ctx: 32768
+
+# Sections 1,2,3,5,6,7,7.1,7.2,8 carry real numbers, so pandoc's "# 1. Proposal
+# Summary" is picked up by the engine's markdown pass without help. The Technical
+# Plan's subsections are what need mapping — and note the draft has NO heading for
+# "4. Technical Plan" itself (it is underlined body text), while TA3's title is a
+# bold paragraph rather than a Word heading, so `[#*\s]*` tolerates both the "## "
+# and "**" prefixes.
+#
+# The patterns are deliberately fussy. The single space after "TA1." excludes subtask
+# labels ("TA1.A:"), and capital-then-lowercase excludes both the bold run-in
+# "## *TA4.B:* Tessel Biosciences..." and table cells that begin with a padded TA tag
+# ("TA4.        TAZ effects on the microcirculation"), either of which would otherwise
+# anchor the section in the wrong place — only the FIRST match wins.
+heading_patterns:
+  - {pattern: '^[#*\s]*System architecture and interfaces', id: "4.0"}
+  - {pattern: '^[#*\s]*TA1\.\s[A-Z][a-z]', id: "4.1"}
+  - {pattern: '^[#*\s]*TA2\.\s[A-Z][a-z]', id: "4.2"}
+  - {pattern: '^[#*\s]*TA3\.\s[A-Z][a-z]', id: "4.3"}
+  - {pattern: '^[#*\s]*TA4\.\s[A-Z][a-z]', id: "4.4"}
+  - {pattern: '^[#*\s]*Integration, IV&V', id: "4.5"}
+
+rfa_context: >
+  IGoR is a 5-year, 3-phase ARPA-H program building a closed-loop research
+  ecosystem from four Technical Areas that must all be addressed: TA1 modular,
+  mechanistic, multiscale disease digital twins; TA2 a "New Science Engine" AI
+  orchestration layer that finds knowledge gaps, generates hypotheses, designs
+  experiments and explains its reasoning; TA3 a layered protocol architecture
+  (Intent / Protocols / Calibration / Hardware) making experiments portable across
+  laboratories; TA4 a marketplace of at least two validated laboratories executing
+  those protocols and returning model-ready data. Phase I (18mo) establishes
+  components and an initial within-team closed loop; Phase II (18mo) adds
+  cross-team interoperability and multicellular systems across >=3 labs; Phase III
+  (24mo) scales to a unified marketplace, extends to a SECOND related disease area,
+  and demonstrates external researchers using the system. Recurring program
+  requirements: >=85-90% inter-laboratory concordance, >=10x experimental cycle-time
+  improvement by Phase III, algorithmic knowledge-gap detection, collaboration with
+  an Independent Verification & Validation (IV&V) partner (containerized artifacts,
+  model cards, biannual reviews), participation in a Domain-Driven Design workshop,
+  RFC process, bake-offs and a Phase III connect-a-thon, open standards and
+  commercial-friendly open-source licensing, and augmentation of human researchers
+  rather than their replacement. Human clinical trials and vertebrate animal work
+  in the marketplace are out of scope.
+
+# Every criterion sets `group` explicitly, since several sections feed more than
+# one ARPA-H criterion (the Proposal Summary supports both merit and mission fit).
+section_groups: {}
+
+section_totals:
+  "C1 — Overall Scientific and Technical Merit": 54
+  "C2 — Proposer's Capabilities and/or Related Experience": 30
+  "C3 — Relevance to ARPA-H Mission and User Experience": 20
+
+criteria:
+  # ── Criterion 1: Overall Scientific and Technical Merit (most important) ──
+  - section: "1"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: Novelty and credibility of the overall concept"
+    max: 4
+    look_for: >
+      A synopsis that states the technical challenge, what is new versus the state of
+      the art and emerging trends, and why the approach will succeed. An Innovative
+      Claims table linking ISO pages to technical challenges to innovation and
+      evidence, with concrete specifics rather than qualitative generalities.
+      Withhold points for placeholder text, author names, or unfilled tables.
+
+  - section: "4.0"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: System architecture and TA interfaces"
+    max: 5
+    look_for: >
+      A coherent closed-loop architecture across all four TAs with high cohesion and
+      low coupling. Explicit treatment of the INTERFACES — what information flows
+      between TAs, in what format, at what cadence — and an initial approach to
+      defining and maintaining them, acknowledging they evolve via the Domain-Driven
+      Design workshop. Justification for any capability placed in a different TA
+      than the ISO describes.
+
+  - section: "4.1"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: TA1 — Digital twins of disease"
+    max: 8
+    look_for: >
+      Disease models that are modular, mechanistic, multiscale and verifiable, with a
+      stated representational framework (languages, schemas, ontologies) that leverages
+      existing databases and repositories and supports automated ingestion of TA4 data.
+      Handling of uncertainty, conflicting evidence and heterogeneous sources.
+      Algorithmic knowledge-gap identification with a justified TA1/TA2 boundary.
+      Justification of the chosen disease area as tractable, multifactorial/multiscale,
+      and addressable in the program timeframe, plus a path to a second disease area by
+      Phase III. Quantitative targets (>=3 sub-models Phase I, >=10 spanning >=2 scales
+      Phase II, >=15 spanning >=3 scales Phase III; model update latency; prediction
+      accuracy on held-out TA4 data). Penalize purely correlational models or plans to
+      train new foundation models from scratch.
+
+  - section: "4.2"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: TA2 — New Science Engine"
+    max: 8
+    look_for: >
+      An orchestration layer that is demonstrably NOT a wrapper around a frontier LLM:
+      mechanistic grounding in TA1, multi-modal experiment design via TA3, distributed
+      execution via TA4. Model-agnostic and evolvable so future backends drop in without
+      re-engineering (>=2 backends including >=1 open-weight by Phase II). Multiple
+      parallel/competing deliberation streams with designed roles for dissent,
+      verification and reconciliation, informed by team science — not single-thread
+      chain of thought. Explainability: narratives and visualizations of why a gap was
+      identified and why an experiment resolves it; researchers can inject their own
+      expertise; output detailed enough (cell type, time frame, stimuli, response,
+      phenotype) to drive TA3. Augmentation over automation, with human authorization
+      required for consequential/irreversible commitments. Expert-panel hypothesis
+      quality targets (>=50/75/85%) and researcher usability studies.
+
+  - section: "4.3"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: TA3 — Interoperable experimental procedures"
+    max: 8
+    look_for: >
+      A layered protocol stack covering all four required abstractions — Intent,
+      Protocols, Calibration, Hardware — with error handling and fault tolerance.
+      An explicit mechanism distinguishing scientifically meaningful parameters from
+      procedurally arbitrary ones that get locked to a consensus default, with changes
+      justified through an RFC process, to suppress batch effects. Rich metadata (cell
+      lines, reagents, calibration status, QC, power analyses, uncertainty). Coverage of
+      at least THREE distinct experimental modalities. Community engagement: bake-offs,
+      the RFC process, open schemas and reference implementations with extensible
+      namespaces, and named engagement with standards bodies or equipment manufacturers.
+      Penalize closed or proprietary protocol systems.
+
+  - section: "4.4"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: TA4 — Experiment marketplace"
+    max: 7
+    look_for: >
+      At least TWO named validated laboratories on the team. Defined cell lines,
+      reference materials and standard samples; QC parameters through the workflow;
+      demonstrated intra-team reproducibility against concordance thresholds
+      (>=85% Phase I/II, >=90% Phase III) and cross-team execution from Phase II.
+      Exceptions per experiment tracked as a metric with autonomous handling rising to
+      >=70% by Phase III. Marketplace operations: request/result interfaces, live
+      capability manifests, two-way communication, onboarding of new labs and
+      capabilities against IV&V standards. Expansion from cultured cells to
+      multicellular systems (organoids, microbiomes, invertebrates) in Phase II.
+      Data and metadata returned in formats supporting automated TA1 model updating.
+
+  - section: "4.5"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: Integration, IV&V collaboration, and cross-team participation"
+    max: 4
+    look_for: >
+      A concrete plan for closed-loop integration across the four TAs and for
+      collaborating with the IV&V partners (containerizing software, maintaining
+      documentation and model cards, transferring materials, attending biannual
+      reviews), with effort budgeted for it. Commitment to program-wide activities:
+      substantial representation at the Phase I Domain-Driven Design workshop, working
+      groups, RFCs, bake-offs, the Phase III connect-a-thon, and Associate Performer
+      Agreements. Named individuals leading integration with stated annual hours.
+
+  - section: "10"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: Schedule, phasing, and TDD cross-walk"
+    max: 2
+    look_for: >
+      A Gantt-format timeline covering all three phases whose task structure matches the
+      Task Description Document, each row carrying a TDD number, a responsible performer
+      and a bounded span. Phase boundaries should fall at months 18 and 36 per the ISO.
+      Penalize rows with no scheduled span, tasks with no named performer, work that
+      spans the entire 60 months without intermediate structure, and any task in the
+      schedule that has no counterpart in the TDD (or the reverse).
+
+  - section: "11"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: TDD task completeness, deliverables, and milestone quality"
+    max: 4
+    look_for: >
+      Task descriptions complete and in a logical sequence, with deliverables clearly
+      defined and a responsible organization named for every task. Every task must carry
+      measurable milestones: ARPA-H states explicitly that "the assay has been validated"
+      is NOT sufficient and requires quantitative performance criteria such as ">=95%
+      sensitivity and 90% specificity". Withhold points for tasks listing no milestones
+      at all, milestones that merely restate the task title, deliverables left vague, and
+      phase assignments inconsistent with the 18/18/24-month structure.
+
+  - section: "5"
+    group: "C1 — Overall Scientific and Technical Merit"
+    name: "C1: Risk mitigation, contingency, and alternative approaches"
+    max: 4
+    look_for: >
+      Identification of major technical, managerial and translational risks — ARPA-H
+      expects real risk — each paired with a clearly defined, feasible mitigation and
+      a named alternative approach. Risks should cover the hard parts (cross-laboratory
+      reproducibility, model validity, AI hallucination, standards adoption, partner
+      dependencies), not generic project risks, and should preserve scientific impact,
+      budget and delivery timeliness.
+
+  # ── Criterion 2: Proposer's Capabilities and/or Related Experience ──
+  - section: "7.1"
+    group: "C2 — Proposer's Capabilities and/or Related Experience"
+    name: "C2: Team expertise across all four TAs"
+    max: 14
+    look_for: >
+      Expertise and capability demonstrably covering ALL FOUR TAs, with each
+      sub-awardee's and consultant's contribution identified. Evidence the team has
+      delivered comparable products within budget and schedule, including named prior
+      or ongoing government or commercial efforts they led or participated in. Depth in
+      mechanistic modeling, AI orchestration, laboratory automation and standards work.
+      Withhold points for asserted expertise with no supporting track record.
+
+  - section: "7.2"
+    group: "C2 — Proposer's Capabilities and/or Related Experience"
+    name: "C2: PI, organization, and management roles"
+    max: 10
+    look_for: >
+      A single named PI under one prime performer, with a clear organizational
+      description of roles and responsibilities and how TA responsibilities are
+      distributed and coordinated. ISO §5.5 requires THREE distinct roles: the PI; an
+      individual responsible for day-to-day project management, delivery tracking,
+      dependency management and reporting, with experience managing large multi-team
+      efforts and adequate level of effort; and a separate "software architect"
+      responsible for interface design, cross-team interoperability and architectural
+      consistency, with demonstrated experience building systems that interoperate with
+      external partners, and stated architectural authority over implementation
+      decisions including AI-accelerated coding. Withhold points if the PM or software
+      architect is unnamed or collapsed into the PI.
+
+  - section: "2"
+    group: "C2 — Proposer's Capabilities and/or Related Experience"
+    name: "C2: Relationship to prior and concurrent work"
+    max: 6
+    look_for: >
+      Clear delineation of how this effort relates to the team's past and present
+      projects, distinguishing what already exists from what will be built, and
+      leveraging relevant prior research to maximize benefit from the funding.
+
+  # ── Criterion 3: Relevance to ARPA-H Mission and User Experience ──
+  - section: "2"
+    group: "C3 — Relevance to ARPA-H Mission and User Experience"
+    name: "C3: Health impact and transformative potential"
+    max: 8
+    look_for: >
+      A qualitative AND quantitative account of the difference the effort makes,
+      addressing an area of currently unmet biomedical need and the degree to which it
+      could transform biomedicine. Specific outcomes from the proposed research, plus
+      the R&D, commercial and clinical applications that follow. Interdisciplinarity of
+      the approach. Vague claims of impact without numbers should not score well.
+
+  - section: "1"
+    group: "C3 — Relevance to ARPA-H Mission and User Experience"
+    name: "C3: End-user needs, accessibility, and misuse"
+    max: 6
+    look_for: >
+      Evidence the solution contemplates the end user — which researchers, patients,
+      providers, health systems or payers benefit and how — and how it fits real
+      research or clinical workflows. Explicit treatment of cost, accessibility and
+      user experience so users in all geographies can reach it affordably. A stated
+      account of how the effort could be misperceived or misused and how that is
+      prevented. ARPA-H requires researchers to be amplified, not replaced.
+
+  - section: "6"
+    group: "C3 — Relevance to ARPA-H Mission and User Experience"
+    name: "C3: Commercialization and transition path"
+    max: 6
+    look_for: >
+      A commercialization strategy showing the team has considered the commercial path
+      and holds the partnerships to walk it: public-private partnership for sustained
+      marketplace operation, business or academic funding models, direct investment
+      routes for philanthropies/agencies/patient groups, and proof-of-concept
+      integration into realistic research workflows. Phase III requires at least one
+      sustained partnership or adoption path (e.g. an NIH center, cloud lab provider,
+      or academic consortium). Open-source and IP posture that enables rather than
+      blocks adoption.
+
+# Deterministic scan for the exact, checkable IGoR requirements a model may gloss.
+keywords:
+  # Program-wide activities that are named milestones in Appendix A Table 1
+  - {pattern: "domain.?driven design", category: "Program activities", label: "Domain-Driven Design workshop"}
+  - {pattern: "walking skeleton", category: "Program activities"}
+  - {pattern: "connect.?a.?thon", category: "Program activities", label: "connect-a-thon"}
+  - {pattern: "bake.?off", category: "Program activities", label: "bake-off"}
+  - {pattern: "request for comment|\\brfc\\b", category: "Program activities", label: "RFC process"}
+  - {pattern: "associate performer agreement|\\bapa\\b", category: "Program activities", label: "Associate Performer Agreement"}
+  - {pattern: "iv&v|independent verification", category: "Program activities", label: "IV&V"}
+  - {pattern: "model card", category: "Program activities"}
+  - {pattern: "containeriz", category: "Program activities", label: "containerization"}
+  # Phase and scope coverage — all four TAs and all three phases are mandatory
+  - {pattern: "\\bta1\\b", category: "TA coverage", label: "TA1"}
+  - {pattern: "\\bta2\\b", category: "TA coverage", label: "TA2"}
+  - {pattern: "\\bta3\\b", category: "TA coverage", label: "TA3"}
+  - {pattern: "\\bta4\\b", category: "TA coverage", label: "TA4"}
+  - {pattern: "phase i{1,3}\\b|phase 1|phase 2|phase 3", category: "TA coverage", label: "phases named"}
+  - {pattern: "second disease|related disease|2nd disease", category: "TA coverage", label: "second disease area (Phase III)"}
+  # Quantitative metrics from Appendix A Table 2
+  - {pattern: "concordance", category: "Metrics"}
+  - {pattern: "10x|10-fold|ten.?fold", category: "Metrics", label: "10x cycle-time improvement"}
+  - {pattern: "cycle time", category: "Metrics", label: "experimental cycle time"}
+  - {pattern: "knowledge gap", category: "Metrics"}
+  - {pattern: "exception", category: "Metrics", label: "exceptions per experiment"}
+  - {pattern: "open.?weight", category: "Metrics", label: "open-weight model backend"}
+  - {pattern: "usability stud|domain scientist", category: "Metrics", label: "researcher usability study"}
+  - {pattern: "expert panel", category: "Metrics"}
+  - {pattern: "uncertainty quantification|\\buq\\b", category: "Metrics", label: "uncertainty quantification"}
+  # TA3 protocol stack — all four layers must be present by name
+  - {pattern: "intent layer|\\bintent\\b", category: "TA3 protocol stack", label: "Intent layer"}
+  - {pattern: "calibration", category: "TA3 protocol stack", label: "Calibration layer"}
+  - {pattern: "hardware layer", category: "TA3 protocol stack"}
+  - {pattern: "modalit", category: "TA3 protocol stack", label: "experimental modalities (>=3)"}
+  # TA1/TA4 substance
+  - {pattern: "ontolog", category: "TA1/TA4 substance", label: "ontologies"}
+  - {pattern: "digital twin", category: "TA1/TA4 substance"}
+  - {pattern: "multiscale|multi.?scale", category: "TA1/TA4 substance", label: "multiscale"}
+  - {pattern: "cell line", category: "TA1/TA4 substance"}
+  - {pattern: "organoid|invertebrate|multicellular", category: "TA1/TA4 substance", label: "multicellular systems (Phase II)"}
+  - {pattern: "quality control|\\bqc\\b", category: "TA1/TA4 substance", label: "quality control"}
+  # Management roles required by ISO §5.5
+  - {pattern: "principal investigator|\\bpi\\b", category: "Management roles", label: "principal investigator"}
+  - {pattern: "project manager|program manager|day.?to.?day", category: "Management roles", label: "project manager"}
+  - {pattern: "software architect", category: "Management roles"}
+  # Policy and IP requirements from Appendix C §3
+  - {pattern: "open.?source", category: "Policy & IP", label: "open source"}
+  - {pattern: "apache 2\\.0|mit license|\\bbsd\\b", category: "Policy & IP", label: "commercial-friendly license"}
+  - {pattern: "public repository|open.?access", category: "Policy & IP", label: "public repository"}
+  - {pattern: "interoperab", category: "Policy & IP", label: "interoperability"}
+  - {pattern: "human subject", category: "Policy & IP", label: "human subjects research"}
+  - {pattern: "conflict of interest|\\boci\\b", category: "Policy & IP", label: "organizational conflict of interest"}
+  - {pattern: "cost.?shar|resource sharing", category: "Policy & IP", label: "cost / resource sharing"}
+  - {pattern: "task description document|\\btdd\\b", category: "Policy & IP", label: "Task Description Document"}

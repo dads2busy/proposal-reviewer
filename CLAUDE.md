@@ -1,16 +1,32 @@
 # proposal-reviewer
 
-Offline, config-driven compliance reviewer for grant proposals. A single generic engine
+Config-driven compliance reviewer for grant proposals. A single generic engine
 (`proposal_reviewer.py`) scores any proposal against a rubric defined in a YAML config
-under `configs/`, using a **two-model local ensemble** (Ollama) plus a deterministic
-keyword pass, and merges the results into a combined report. See @README.md for the
-user-facing overview.
+under `configs/`, using a **two-model ensemble** — local Ollama, UVA's self-hosted RC
+GenAI, or one of each — plus a deterministic keyword pass, and merges the results into
+a combined report. See @README.md for the user-facing overview.
 
-## Core invariant: everything runs locally
+## Core invariant: drafts never reach a commercial provider
 
-The whole point is zero cloud/API usage — reviews run on local models via Ollama so they
-can be re-run cheaply while a draft is iterated. Do not add cloud API calls to the engine.
-The model endpoint is the local Ollama OpenAI-compatible server at `localhost:11434`.
+An unpublished proposal draft must never be sent to a commercial third party.
+Two backends satisfy this: a local Ollama, and UVA's RC GenAI service, which is
+UVA-hosted and stays inside the institution. **Do not add OpenAI, Anthropic,
+Google, or any other commercial API provider to the engine.**
+
+The earlier form of this rule said "everything runs on localhost." That was a
+proxy for the requirement above, and it ruled out UVA-hosted inference for no
+good reason.
+
+**UVA RC GenAI answers only from an HPC node.** A VPN-connected laptop gets
+HTTP 401 from Apache even with a valid key — the proxy rejects the request
+before Open WebUI evaluates the token. Browser access works from anywhere via
+NetBadge, so browser success does not imply API access works. Run
+`--check-provider` on the target machine to confirm.
+
+That service also **always streams** (`text/event-stream`) and ignores
+`stream: false`, so `providers._parse_reply` reassembles the `delta.content`
+frames. Do not "simplify" it back to a single `json.loads` — that breaks every
+UVA call while leaving Ollama green.
 
 ## Architecture — one engine, many configs
 
@@ -29,6 +45,12 @@ The model endpoint is the local Ollama OpenAI-compatible server at `localhost:11
 
 - Exactly TWO models per config, and they should be **different families** (e.g. llama + qwen):
   the combine step assumes two, and independence between families is the signal we trust.
+- When both slots hold the same model, the engine sets `single_family` and rewrites the
+  combined report's language — two samples are a reliability check, not corroboration, and
+  the second sample's temperature rises to 0.6 so it actually samples wider. Never reword
+  those sections back to claiming two independent opinions.
+- Secrets live in `.env` (gitignored, and `chmod 600`'d on read); configs name the variable
+  via `api_key_env` and never hold a value. The engine rejects a literal `api_key:`.
 - Reports are written next to the PROPOSAL file, never into this repo. `.gitignore` keeps
   any stray `compliance_report_*` out of version control.
 - Commit configs and the engine; never commit a proposal or its generated reports here.

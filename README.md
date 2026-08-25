@@ -1,12 +1,15 @@
 # proposal-reviewer
 
-Offline, config-driven compliance review for grant proposals. Runs a two-model
-**local** ensemble (via [Ollama](https://ollama.com)) plus a deterministic keyword
-pass against a proposal, scores it against a rubric defined in a YAML config, and
-merges everything into a combined report (`.md` / `.html` / `.pdf`).
+Config-driven compliance review for grant proposals. Runs a two-model ensemble —
+on a local [Ollama](https://ollama.com), on UVA's self-hosted RC GenAI service, or
+one of each — plus a deterministic keyword pass against a proposal, scores it
+against a rubric defined in a YAML config, and merges everything into a combined
+report (`.md` / `.html` / `.pdf`).
 
-Nothing leaves the machine and it consumes no cloud/API usage — the whole point is
-to run proposal reviews locally and repeatedly while you iterate on a draft.
+No draft ever reaches a commercial provider — the whole point is to review
+proposals repeatedly, for free, while you iterate on a draft. Models run either on
+your own machine via Ollama or on UVA's self-hosted RC GenAI service; see
+[Model backends](#model-backends).
 
 ## Why config-driven
 
@@ -25,6 +28,40 @@ picks — lives in a YAML file under `configs/`. One engine, one config per prop
 
 Requires Ollama >= 0.19 (MLX backend on Apple Silicon).
 
+## Model backends
+
+Model names may carry a provider prefix. A bare name means local Ollama, so
+existing configs need no changes.
+
+    models: ["gemma3:27b", "qwen2.5:32b"]            # both local Ollama
+    models: ["uva:Kimi K2.5", "ollama:qwen2.5:32b"]  # hybrid
+
+Non-local providers are declared in the config and take their key from the
+environment — never from the file:
+
+    providers:
+      uva:
+        kind: openai
+        base_url: https://open-webui.rc.virginia.edu/api/
+        api_key_env: UVARC_GenAI_API
+
+Copy `.env.example` to `.env` and fill in the key. `.env` is gitignored, and the
+engine tightens it to mode 600 on read.
+
+**UVA RC GenAI only answers from an HPC node.** From a VPN-connected laptop it
+returns HTTP 401 even with a valid key, because Apache rejects the request before
+the token is ever evaluated — browser access via NetBadge works from anywhere, so
+it proves nothing about API access. Check any machine with:
+
+    python proposal_reviewer.py --config CONFIG --check-provider
+
+UVA hosts a single model, so a UVA-only config runs the same model twice. The
+engine detects this and relabels the combined report: two samples measure whether
+a score is *stable*, not whether two independent reviewers agree. It also widens
+the second sample's temperature so the extra call is worth making.
+
+See `configs/uva-kimi-example.yaml` for a complete example.
+
 ## Use
 
     # Validate a config against a proposal without running models:
@@ -35,6 +72,9 @@ Requires Ollama >= 0.19 (MLX backend on Apple Silicon).
 
     # Override models ad hoc:
     python proposal_reviewer.py PROPOSAL --config CONFIG --models llama3.3:70b qwen3.6:27b
+
+    # Confirm this machine can reach and authenticate against each backend:
+    python proposal_reviewer.py --config CONFIG --check-provider
 
 `PROPOSAL` can be `.docx`, `.pdf`, `.md`, `.tex`, or `.txt`. Reports are written
 next to the proposal file.

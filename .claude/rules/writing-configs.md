@@ -15,12 +15,30 @@ A config is one YAML file per funding opportunity. The engine reads it; you neve
 - `total_points`: grand total (defaults to the sum of criterion maxes if omitted).
 - `reviewer_role`: persona injected into the system prompt
   (e.g. "an experienced CDC peer reviewer scoring a cooperative-agreement application").
-- `models`: exactly two Ollama model tags, **different families**.
+- `models`: exactly two model refs, **different families** where the backend offers a
+  choice. A bare tag (`qwen2.5:32b`) is a local Ollama model; a `provider:model` ref
+  (`uva:Kimi K2.5`) resolves against `providers` below. When both slots name the same
+  model the engine treats the run as single-family: it widens the second sample's
+  temperature and rewrites the combined report so it claims consistency, not agreement.
+- `providers` (optional): non-Ollama backends, keyed by the prefix used in `models`.
+
+      providers:
+        uva:
+          kind: openai                                    # OpenAI-compatible chat API
+          base_url: https://open-webui.rc.virginia.edu/api/
+          api_key_env: UVARC_GenAI_API                    # NAME of an env var, never a key
+
+  `api_key_env` names an environment variable read from the real environment or `.env`;
+  a literal `api_key:` is rejected, because configs are committed and keys must not be.
+  Only self-hosted or institutional endpoints belong here — never a commercial provider.
+  Confirm a machine can reach one with `--check-provider`.
 - `top_recommendations` (optional): number of items in the combined report's synthesized
   "Top recommendations" section. Defaults to 7.
 - `synthesis_model` (optional): which model writes the synthesized recommendations.
   Defaults to the first entry in `models` (no extra pull needed). It is a post-combine
-  step that reuses a reviewer model, not a third reviewer.
+  step that reuses a reviewer model, not a third reviewer. It may carry its own
+  `provider:` prefix and is resolved against its own backend, so naming a local model
+  here while the ensemble runs remotely (or the reverse) works.
 - `stop_marker` (optional): truncate extracted text at the first occurrence of this string;
   use it to drop references/appendices the last section would otherwise absorb.
 - `heading_patterns` (optional): `[{pattern: <regex>, id: "4.1"}, ...]`. Assigns section IDs

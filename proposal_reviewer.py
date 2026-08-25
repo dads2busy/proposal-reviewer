@@ -2,9 +2,10 @@
 """
 proposal_reviewer.py — proposal-agnostic offline compliance reviewer.
 
-Runs a two-model LOCAL ensemble (via Ollama) plus a deterministic keyword pass
-against a grant proposal, scores it against a rubric defined entirely in a YAML
-config, and merges the results into a combined report (.md / .html / .pdf).
+Runs a two-model ensemble plus a deterministic keyword pass against a grant
+proposal, scores it against a rubric defined entirely in a YAML config, and merges
+the results into a combined report (.md / .html / .pdf). Models run on a local
+Ollama or on UVA's self-hosted RC GenAI — never on a commercial provider.
 
 The engine is generic. Everything proposal-specific — the criteria, point caps,
 section map, keywords, models — lives in the config file, so one engine serves
@@ -12,11 +13,13 @@ every proposal you review.
 
 Usage:
     python proposal_reviewer.py PROPOSAL --config configs/cdc-ip-26-0102.yaml
+    python proposal_reviewer.py --config CONFIG --check-provider  # test backends, then exit
     python proposal_reviewer.py PROPOSAL --config CONFIG --dry-run   # validate mapping, no model calls
     python proposal_reviewer.py PROPOSAL --config CONFIG --models llama3.3:70b qwen3.6:27b
 
 Requires: pyyaml (pip install pyyaml); pandoc + pdftotext for extraction/rendering;
-a local Ollama (>=0.19) with the configured models pulled.
+and, for local models, an Ollama (>=0.19) with those models pulled. Remote providers
+are declared per-config under `providers:` and keyed from .env — see README.md.
 """
 
 import argparse, datetime, json, re, subprocess, sys
