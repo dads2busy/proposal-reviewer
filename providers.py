@@ -117,6 +117,33 @@ def _urllib_transport(url, body, headers, timeout):
         return r.read()
 
 
+def _parse_reply(raw):
+    """Message content from either a single JSON completion or an SSE stream.
+
+    UVA's Open WebUI always answers `text/event-stream` and ignores `stream: false`,
+    so the client reassembles the deltas itself. Ollama returns one JSON object."""
+    text = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+    if not text.lstrip().startswith("data:"):
+        return json.loads(text)["choices"][0]["message"]["content"]
+    parts = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:"):].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue                      # keep-alive or comment frame
+        for choice in chunk.get("choices") or []:
+            piece = ((choice.get("delta") or {}).get("content")
+                     or (choice.get("message") or {}).get("content") or "")
+            parts.append(piece)
+    return "".join(parts)
+
+
 def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                  environ=None, sleep=None):
     """Build a chat callable for one provider.
@@ -159,7 +186,17 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
         for attempt in range(MAX_HTTP_ATTEMPTS):
             try:
                 raw = transport(url, body, dict(headers), timeout)
-                return json.loads(raw)["choices"][0]["message"]["content"]
+                try:
+                    return _parse_reply(raw)
+                except (json.JSONDecodeError, KeyError, IndexError,
+                        TypeError, AttributeError, UnicodeDecodeError) as e:
+                    excerpt = (raw[:120] if isinstance(raw, (bytes, bytearray))
+                               else str(raw)[:120])
+                    raise ProviderError(
+                        f"{provider_name}: {host} returned a reply this client "
+                        f"could not parse ({type(e).__name__}). An HTML body here "
+                        f"usually means a login page, not an API response. "
+                        f"First bytes: {excerpt!r}") from e
             except urllib.error.HTTPError as e:
                 if e.code == 401:
                     raise ProviderError(

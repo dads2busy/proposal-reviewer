@@ -473,5 +473,55 @@ class TestEnvPermissions(unittest.TestCase):
         self.assertEqual(err.getvalue(), "")
 
 
+def _sse(*chunks):
+    """Encode chunks the way Open WebUI streams them."""
+    lines = []
+    for c in chunks:
+        lines.append("data: " + _json.dumps(c))
+        lines.append("")
+    lines += ["data: [DONE]", ""]
+    return "\n".join(lines).encode()
+
+
+def _delta(text):
+    return {"choices": [{"index": 0, "delta": {"content": text}}]}
+
+
+class TestStreamingReply(unittest.TestCase):
+    """UVA's Open WebUI answers text/event-stream and IGNORES `stream: false`, so a
+    client that only json.loads() the body gets a JSONDecodeError on every call."""
+
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def _fn(self, raw):
+        return make_chat_fn(self.CFG, "uva", transport=lambda *a: raw,
+                            environ={"TEST_KEY": "sk-test"}, sleep=lambda s: None)
+
+    def test_reassembles_a_streamed_message(self):
+        raw = _sse(_delta(""), _delta("Hello"), _delta(", world"))
+        self.assertEqual(self._fn(raw)("m", "sys", "user"), "Hello, world")
+
+    def test_done_sentinel_is_not_treated_as_content(self):
+        out = self._fn(_sse(_delta("ok")))("m", "sys", "user")
+        self.assertNotIn("DONE", out)
+        self.assertEqual(out, "ok")
+
+    def test_chunks_without_content_are_skipped(self):
+        raw = _sse({"choices": [{"index": 0, "delta": {"role": "assistant"}}]},
+                   _delta("body"))
+        self.assertEqual(self._fn(raw)("m", "sys", "user"), "body")
+
+    def test_plain_json_completion_still_works(self):
+        self.assertEqual(self._fn(_reply("unstreamed"))("m", "sys", "user"),
+                         "unstreamed")
+
+    def test_unparseable_body_becomes_an_actionable_error(self):
+        with self.assertRaises(ProviderError) as ctx:
+            self._fn(b"<html>NetBadge login</html>")("m", "sys", "user")
+        self.assertIn("example.invalid", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
