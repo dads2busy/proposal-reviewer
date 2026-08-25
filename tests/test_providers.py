@@ -208,5 +208,69 @@ class TestMakeChatFn(unittest.TestCase):
         self.assertIn("example.invalid", str(ctx.exception))
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from proposal_reviewer import resolve_chat_fns
+
+
+class TestResolveChatFns(unittest.TestCase):
+    CFG = {"providers": {"uva": {"kind": "openai",
+                                 "base_url": "https://example.invalid/api/",
+                                 "api_key_env": "TEST_KEY"}}}
+
+    def test_strips_provider_prefix_from_model_name(self):
+        slots = resolve_chat_fns(self.CFG, ["uva:Kimi K2.5", "ollama:qwen2.5:32b"],
+                                 environ={"TEST_KEY": "sk-test"})
+        self.assertEqual([s[1] for s in slots], ["Kimi K2.5", "qwen2.5:32b"])
+
+    def test_labels_come_from_slot_labels(self):
+        slots = resolve_chat_fns(self.CFG, ["uva:Kimi K2.5", "uva:Kimi K2.5"],
+                                 environ={"TEST_KEY": "sk-test"})
+        self.assertEqual([s[0] for s in slots],
+                         ["uva:Kimi K2.5 (sample 1)", "uva:Kimi K2.5 (sample 2)"])
+
+    def test_each_slot_gets_a_callable(self):
+        slots = resolve_chat_fns(self.CFG, ["uva:Kimi K2.5", "ollama:gemma3:27b"],
+                                 environ={"TEST_KEY": "sk-test"})
+        for _, _, fn in slots:
+            self.assertTrue(callable(fn))
+
+    def test_undeclared_prefix_is_treated_as_an_ollama_model(self):
+        # With no matching provider declared, the whole string is a model name.
+        # This is what keeps `qwen2.5:32b` working.
+        slots = resolve_chat_fns({}, ["nosuch:model", "gemma3"], environ={})
+        self.assertEqual([s[1] for s in slots], ["nosuch:model", "gemma3"])
+
+    def test_openai_provider_without_key_raises(self):
+        with self.assertRaises(ProviderError):
+            resolve_chat_fns(self.CFG, ["uva:Kimi K2.5", "gemma3"], environ={})
+
+
+from proposal_reviewer import synthesize_recommendations
+
+
+class TestSynthesizeRecommendationsNumCtx(unittest.TestCase):
+    """Regression: synthesize_recommendations must forward num_ctx to the chat_fn
+    so an Ollama synthesis call keeps sending options.num_ctx once main() passes a
+    make_chat_fn-produced chat_fn (whose num_ctx defaults to None) instead of the
+    old _ollama_chat (whose num_ctx defaulted to DEFAULT_NUM_CTX)."""
+
+    def test_forwards_num_ctx_to_chat_fn(self):
+        cfg = {"criteria": [{"name": "C", "max": 10, "section": "1", "look_for": "x"}]}
+        results = {
+            "a": [{"awarded": 2, "max": 10, "gaps": ["needs more detail"]}],
+            "b": [{"awarded": 3, "max": 10, "gaps": ["needs more detail"]}],
+        }
+        seen = {}
+
+        def fake_chat_fn(model, system, user, timeout=900, num_ctx=None):
+            seen["num_ctx"] = num_ctx
+            return _json.dumps([{"title": "t", "points_at_stake": 5,
+                                 "criteria": ["C"], "do": "x", "why": "y"}])
+
+        synthesize_recommendations(cfg, ["a", "b"], results,
+                                   chat_fn=fake_chat_fn, num_ctx=32768)
+        self.assertEqual(seen["num_ctx"], 32768)
+
+
 if __name__ == "__main__":
     unittest.main()

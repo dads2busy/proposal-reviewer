@@ -19,7 +19,7 @@ Requires: pyyaml (pip install pyyaml); pandoc + pdftotext for extraction/renderi
 a local Ollama (>=0.19) with the configured models pulled.
 """
 
-import argparse, datetime, json, re, subprocess, sys, urllib.request
+import argparse, datetime, json, re, subprocess, sys
 from pathlib import Path
 
 try:
@@ -27,7 +27,8 @@ try:
 except ImportError:
     sys.exit("Missing dependency: pyyaml.  Install with:  pip install pyyaml")
 
-OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
+import providers
+from providers import ProviderError
 
 # Section text handed to a model per criterion. Raise via `max_section_chars` in
 # the config when a proposal's sections are long — and raise `num_ctx` with it, since
@@ -282,15 +283,10 @@ def synthesis_system_prompt(role, n, required_elements):
 
 
 def _ollama_chat(model, system_prompt, user_prompt, timeout=900, num_ctx=DEFAULT_NUM_CTX):
-    """Single local Ollama chat call; returns the message content string."""
-    payload = {"model": model, "temperature": 0.2,
-               "messages": [{"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}],
-               "options": {"num_ctx": num_ctx}}
-    req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())["choices"][0]["message"]["content"]
+    """Single local Ollama chat call; returns the message content string.
+    Retained as the default chat_fn for callers that don't resolve a provider."""
+    return providers.make_chat_fn({}, "ollama")(
+        model, system_prompt, user_prompt, timeout=timeout, num_ctx=num_ctx)
 
 
 class JSONRetryError(Exception):
@@ -357,14 +353,15 @@ def deterministic_recommendations(digest, n):
     return recs
 
 
-def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
+def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat,
+                               synth_model=None, num_ctx=None):
     """Ranked, deduplicated recommendations merging both models' gaps. Falls back to a
     deterministic ranking if the synthesis call fails or returns unusable output."""
     digest = build_recommendation_digest(cfg, models, all_results)
     if not digest:
         return []
     n = int(cfg.get("top_recommendations", 7))
-    model = cfg.get("synthesis_model") or models[0]
+    model = synth_model or cfg.get("synthesis_model") or models[0]
     role = cfg.get("reviewer_role", DEFAULT_ROLE)
     system = synthesis_system_prompt(role, n, cfg.get("required_elements"))
     user = ("CRITERIA WITH GAPS (ranked candidates):\n" + _digest_to_prompt(digest)
@@ -375,7 +372,7 @@ def synthesize_recommendations(cfg, models, all_results, chat_fn=_ollama_chat):
         return parsed
 
     try:
-        recs = _chat_json(model, system, user, _valid_recs, chat_fn=chat_fn)
+        recs = _chat_json(model, system, user, _valid_recs, num_ctx=num_ctx, chat_fn=chat_fn)
         return recs[:n]
     except Exception as e:
         print(f"  synthesis failed ({e}); using deterministic ranking", file=sys.stderr)
@@ -532,6 +529,22 @@ def slot_labels(models):
     return [a, b]
 
 
+def resolve_chat_fns(cfg, models, environ=None, temperatures=(0.2, 0.2)):
+    """One (label, bare_model, chat_fn) per ensemble slot, in order.
+
+    The label is the display/results key; the bare model is what gets sent to
+    the backend with any provider prefix stripped."""
+    known = providers.known_provider_names(cfg)
+    labels = slot_labels(models)
+    slots = []
+    for i, ref in enumerate(models):
+        pname, bare = providers.split_model_ref(ref, known)
+        fn = providers.make_chat_fn(cfg, pname, temperature=temperatures[i],
+                                    environ=environ)
+        slots.append((labels[i], bare, fn))
+    return slots
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("proposal")
@@ -557,20 +570,36 @@ def main():
 
     outdir = path.parent
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
+
+    providers.load_dotenv()
+    try:
+        slots = resolve_chat_fns(cfg, models)
+    except ProviderError as e:
+        sys.exit(str(e))
+
     all_results = {}
-    for model in models:
-        print(f"Reviewing with {model} ...", file=sys.stderr)
-        res, report = review_with_model(model, cfg, sections, full_text)
-        all_results[model] = res
-        safe = model.replace(":", "_").replace("/", "_")
+    for label, bare, chat_fn in slots:
+        print(f"Reviewing with {label} ...", file=sys.stderr)
+        try:
+            res, report = review_with_model(bare, cfg, sections, full_text,
+                                            chat_fn=chat_fn)
+        except ProviderError as e:
+            sys.exit(str(e))
+        all_results[label] = res
+        safe = label.replace(":", "_").replace("/", "_").replace(" ", "_")
         (outdir / stamped(f"compliance_report_{safe}", ts, "md")).write_text(report)
+
+    labels = [s[0] for s in slots]
 
     kw_text, kw_pct, kw_missing = keyword_scan(full_text, cfg.get("keywords", []))
     (outdir / stamped("compliance_report_keywords", ts, "md")).write_text(kw_text)
 
     print("Synthesizing recommendations ...", file=sys.stderr)
-    recs = synthesize_recommendations(cfg, models, all_results)
-    combined = build_combined(cfg, models, all_results, kw_pct, kw_missing, recs)
+    recs = synthesize_recommendations(cfg, labels, all_results,
+                                      chat_fn=slots[0][2], synth_model=slots[0][1],
+                                      num_ctx=num_ctx)
+    combined = build_combined(cfg, labels, all_results, kw_pct, kw_missing, recs)
     cpath = outdir / stamped("compliance_report_combined", ts, "md")
     cpath.write_text(combined)
     rendered = render(cpath)
