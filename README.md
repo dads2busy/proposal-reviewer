@@ -76,8 +76,14 @@ See `configs/uva-kimi-example.yaml` for a complete example.
     # Confirm this machine can reach and authenticate against each backend:
     python proposal_reviewer.py --config CONFIG --check-provider
 
+    # Collect reports somewhere else (useful when the proposal sits on a
+    # read-only share, or you want a run history separate from the draft):
+    python proposal_reviewer.py PROPOSAL --config CONFIG --outdir ~/reviews/spirale
+
 `PROPOSAL` can be `.docx`, `.pdf`, `.md`, `.tex`, or `.txt`. Reports are written
-next to the proposal file.
+next to the proposal file unless `--outdir DIR` says otherwise; the directory is
+created if missing, and an unusable one is rejected before any model is called
+rather than after a full run.
 
 ## Writing a config
 

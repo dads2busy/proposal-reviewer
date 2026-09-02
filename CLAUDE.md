@@ -51,8 +51,9 @@ UVA call while leaving Ollama green.
   those sections back to claiming two independent opinions.
 - Secrets live in `.env` (gitignored, and `chmod 600`'d on read); configs name the variable
   via `api_key_env` and never hold a value. The engine rejects a literal `api_key:`.
-- Reports are written next to the PROPOSAL file, never into this repo. `.gitignore` keeps
-  any stray `compliance_report_*` out of version control.
+- Reports are written next to the PROPOSAL file by default; `--outdir DIR` overrides it
+  (resolved before any model call, so a bad path fails fast). Never point it into this
+  repo — `.gitignore` keeps any stray `compliance_report_*` out of version control.
 - Commit configs and the engine; never commit a proposal or its generated reports here.
 - Engine is stdlib-only except PyYAML.
 

@@ -22,7 +22,7 @@ and, for local models, an Ollama (>=0.19) with those models pulled. Remote provi
 are declared per-config under `providers:` and keyed from .env — see README.md.
 """
 
-import argparse, datetime, json, re, subprocess, sys
+import argparse, datetime, json, os, re, subprocess, sys
 from pathlib import Path
 
 try:
@@ -591,6 +591,26 @@ def dry_run(cfg, sections, full_text):
     print(f"\nKeyword coverage: {pct:.0f}%  |  missing: {[m[0] for m in missing]}")
 
 
+def resolve_outdir(proposal: Path, outdir_arg):
+    """Directory the run's reports go in. Defaults beside the proposal.
+
+    Resolved before any model call on purpose: with --outdir it is easy to name a
+    path that does not exist or cannot be written, and discovering that after 30-odd
+    model calls wastes the whole run."""
+    if not outdir_arg:
+        return proposal.parent
+    out = Path(outdir_arg).expanduser()
+    if out.exists() and not out.is_dir():
+        sys.exit(f"--outdir {out}: exists but is not a directory.")
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        sys.exit(f"--outdir {out}: cannot use this directory ({e.strerror}).")
+    if not os.access(out, os.W_OK):
+        sys.exit(f"--outdir {out}: directory is not writable.")
+    return out
+
+
 def stamped(base, ts, ext):
     """Compose a timestamped output filename, e.g.
     stamped('compliance_report_combined', '20260622-211500', 'md')
@@ -685,6 +705,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Validate config/section mapping without calling models")
     ap.add_argument("--check-provider", action="store_true",
                     help="Test connectivity and auth for each configured model, then exit")
+    ap.add_argument("--outdir", default=None, metavar="DIR",
+                    help="Write reports here instead of beside the proposal "
+                         "(created if missing)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).expanduser().read_text())
@@ -712,7 +735,7 @@ def main():
         dry_run(cfg, sections, full_text)
         return
 
-    outdir = path.parent
+    outdir = resolve_outdir(path, args.outdir)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
 
