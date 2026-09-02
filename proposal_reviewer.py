@@ -52,14 +52,50 @@ SYSTEM_TEMPLATE = (
 
 
 # ── extraction ──────────────────────────────────────────────────────
+# pandoc's markdown writer defaults to SETEXT headings ("===" underlines) up to 2.10
+# and to ATX ("#") from 3.0. parse_sections keys on "#", so a setext conversion loses
+# every "#"-derived section — and, worse than losing them, the sections that survive
+# via heading_patterns absorb the dropped text and get scored against it. The flag
+# forcing ATX was renamed at 2.11 and each version rejects the other's spelling.
+ATX_FLAGS = ("--markdown-headings=atx", "--atx-headers")
+
+
+def _run_or_exit(cmd, what):
+    """Run an extractor and refuse to hand back nothing.
+
+    The old code took .stdout unconditionally, so a missing binary or an unreadable
+    file produced empty text, which scores every criterion 0 with no error anywhere."""
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"{what} failed ({cmd[0]} exit {r.returncode}): {r.stderr.strip()}")
+    if not r.stdout.strip():
+        sys.exit(f"{what} produced no text. Is the file empty or corrupt?")
+    return r.stdout
+
+
+def _pandoc_markdown(path: Path) -> str:
+    """docx -> markdown with ATX headings, whatever pandoc version is installed."""
+    for i, flag in enumerate(ATX_FLAGS):
+        cmd = ["pandoc", str(path), "-t", "markdown", flag]
+        if i == len(ATX_FLAGS) - 1:
+            return _run_or_exit(cmd, f"Converting {path.name}")
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            if not r.stdout.strip():
+                sys.exit(f"Converting {path.name} produced no text. "
+                         f"Is the file empty or corrupt?")
+            return r.stdout
+
+
 def extract_text(path: Path, stop_marker=None) -> str:
     s = path.suffix.lower()
     if s in {".md", ".txt", ".tex"}:
         text = path.read_text(errors="ignore")
     elif s == ".docx":
-        text = subprocess.run(["pandoc", str(path), "-t", "markdown"], capture_output=True, text=True).stdout
+        text = _pandoc_markdown(path)
     elif s == ".pdf":
-        text = subprocess.run(["pdftotext", "-layout", str(path), "-"], capture_output=True, text=True).stdout
+        text = _run_or_exit(["pdftotext", "-layout", str(path), "-"],
+                            f"Extracting {path.name}")
     else:
         sys.exit(f"Unsupported file type: {s}")
     if stop_marker and stop_marker in text:
