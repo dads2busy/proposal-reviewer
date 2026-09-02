@@ -545,6 +545,13 @@ def build_combined(cfg, models, all_results, kw_pct, kw_missing, recs,
     return "\n".join(L)
 
 
+UNICODE_FONTS = ("Arial Unicode MS",   # macOS
+                 "DejaVu Sans",        # Linux, and shipped with TeX Live
+                 "Noto Sans",
+                 "Liberation Sans",
+                 "FreeSans")
+
+
 def render(md_path: Path):
     html = md_path.with_suffix(".html")
     subprocess.run(["pandoc", str(md_path), "-s", "-o", str(html)], check=False)
@@ -553,11 +560,13 @@ def render(md_path: Path):
     # wkhtmltopdf/weasyprint render from HTML/CSS and handle Unicode natively; the
     # fontspec TeX engines (xelatex/lualatex) need a Unicode main font. Each attempt
     # that errors (engine absent, or font absent) returns non-zero and we fall through.
-    unicode_font = "Arial Unicode MS"  # broad coverage on macOS
-    attempts = [("wkhtmltopdf", []), ("weasyprint", []),
-                ("xelatex", ["-V", f"mainfont={unicode_font}"]),
-                ("lualatex", ["-V", f"mainfont={unicode_font}"]),
-                ("tectonic", []), ("pdflatex", [])]
+    # One font name is not portable: "Arial Unicode MS" exists on macOS and nowhere
+    # else, so a Linux box with a complete TeX Live still produced no PDF at all.
+    # Each name that is absent fails fast, so trying several costs little.
+    attempts = [("wkhtmltopdf", []), ("weasyprint", [])]
+    attempts += [(eng, ["-V", f"mainfont={font}"])
+                 for eng in ("xelatex", "lualatex") for font in UNICODE_FONTS]
+    attempts += [("tectonic", []), ("pdflatex", [])]
     for eng, extra in attempts:
         try:
             r = subprocess.run(["pandoc", str(md_path), f"--pdf-engine={eng}", *extra, "-o", str(pdf)],
