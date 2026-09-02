@@ -74,6 +74,12 @@ UVA call while leaving Ollama green.
   fold into the preceding numbered section. A proposal with no numbered headings collapses
   to one "full document" — give it `heading_patterns` in the config to name the sections
   (see `configs/arpa-h-igor.yaml`), or fall back to `section: "*"` criteria.
+- Markdown fed from `pandoc` must carry ATX (`#`) headings. Pandoc's markdown writer
+  emits SETEXT (`===` underlines) up to 2.10 and ATX from 3.0, and the heading parser
+  keys on `#` — a setext conversion collapses the whole document to one section and
+  every `section:` misses, silently. Convert with `--markdown-headings=atx` (>=2.11) or
+  `--atx-headers` (<=2.11); each version rejects the other spelling, so try one and fall
+  back. `--dry-run` catches it: the parsed-section list comes back nearly empty.
 - Section text is capped per criterion (`max_section_chars`, default 14000). `section: "*"`
   on a long proposal therefore shows the models only the opening pages — `--dry-run` flags
   this as `⚠ TRUNCATED`. Prefer real sections over `"*"` whenever the document is long.
