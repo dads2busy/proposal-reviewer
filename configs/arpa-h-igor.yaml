@@ -34,6 +34,15 @@ reviewer_role: >
   against the ISO rather than against other proposals
 models: ["gemma3:27b", "qwen2.5:32b"]
 
+# Declared so this config can also be run against UVA's service without editing it:
+#   --models "uva:Kimi K2.5" "uva:Kimi K2.5"
+# Declaring a provider does not select it; `models` above is still the default pair.
+providers:
+  uva:
+    kind: openai
+    base_url: https://open-webui.rc.virginia.edu/api/
+    api_key_env: UVARC_GenAI_API
+
 # References Cited is unlimited-length and would otherwise be absorbed by the last
 # scored section. The leading "# " matches pandoc's heading, not the TOC entry, which
 # starts with "[". (For a pdftotext source the marker was "9. REFERENCES CITED".)
