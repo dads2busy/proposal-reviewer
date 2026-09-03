@@ -65,7 +65,9 @@ Then confirm the machine can authenticate:
 
     python proposal_reviewer.py --config configs/uva-kimi-example.yaml --check-provider
 
-Both login and compute nodes reach the API, so this works before you claim a node.
+Run this on the machine that will do the review, and rerun it whenever you move
+to a different node — reaching the API is a property of the node, not of the key
+(see [Model backends](#model-backends)).
 
 #### PDF output on HPC
 
@@ -100,10 +102,18 @@ environment — never from the file:
 Copy `.env.example` to `.env` and fill in the key. `.env` is gitignored, and the
 engine tightens it to mode 600 on read.
 
-**UVA RC GenAI only answers from an HPC node.** From a VPN-connected laptop it
+**Being on an HPC node is necessary but not sufficient.** A VPN-connected laptop
 returns HTTP 401 even with a valid key, because Apache rejects the request before
 the token is ever evaluated — browser access via NetBadge works from anywhere, so
-it proves nothing about API access. Check any machine with:
+it proves nothing about API access. But an HPC node is no guarantee either: on
+2026-09-03 a `bii-gpu` node returned exactly the same Apache 401 while the
+service was up and a `standard`-partition run had succeeded the day before. The
+tell is that the 401 is byte-identical with a valid key and with no key at all,
+and carries no `WWW-Authenticate` header — a rejected *token* would instead come
+back as JSON from Open WebUI. So when this fails, do not go editing `.env`.
+
+Which partitions are allowed is not documented here because we have not mapped
+it; treat API access as something to check per node, never assume:
 
     python proposal_reviewer.py --config CONFIG --check-provider
 
@@ -164,7 +174,11 @@ connection kills the job.
     python proposal_reviewer.py /path/to/PROPOSAL.docx \
         --config configs/arpa-h-igor.yaml --dry-run
 
-    # 5. Run it
+    # 5. Confirm THIS node can reach the backend — step 4 does not test that,
+    #    and a node that cannot will fail after you have already claimed it
+    python proposal_reviewer.py --config configs/arpa-h-igor.yaml --check-provider
+
+    # 6. Run it
     python proposal_reviewer.py /path/to/PROPOSAL.docx \
         --config configs/arpa-h-igor.yaml \
         --models "uva:Kimi K2.5" "uva:Kimi K2.5"
@@ -177,7 +191,7 @@ Check on it without attaching using `squeue -u $USER` to confirm the job is aliv
 
 Step 4 is not optional in practice. `--dry-run` reports which sections each
 criterion actually matched and whether any got truncated, which is where config
-mistakes surface — after step 5 you have paid for the whole run to find out.
+mistakes surface — after step 6 you have paid for the whole run to find out.
 
 ## Writing a config
 
