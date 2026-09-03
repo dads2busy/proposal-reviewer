@@ -19,10 +19,21 @@ def _usable_cpus():
     """Cores this process may actually run on — not cores the machine has.
 
     llama.cpp sizes its thread pool from the physical machine, so a Slurm job
-    holding 4 of a node's 40 cores spawns 40 threads onto 4 and thrashes. On a
-    V100 that measured 7.4 tok/s generation and 50.9 tok/s prompt eval against
-    33.8 and 189.9 with the pool capped — the GPU sat at a third utilization and
-    70W of 300W, starved rather than throttled, the whole time.
+    holding 8 of a node's 40 cores spawns 40 threads onto 8 and thrashes.
+
+    What the cap buys is GENERATION speed, not prompt speed. Measured on a
+    V100 with gemma3:27b fully offloaded, feeding a 14000-char section (2337
+    tokens, what max_section_chars actually sends): prompt eval was identical
+    capped and uncapped (~10200 tok/s both ways, because prefill batches onto
+    the GPU), while generation ran 33.1 tok/s capped against 22.6 uncapped.
+    Sweeping num_thread on an 8-core job, everything from 1 to 16 threads is
+    flat — only the oversubscribed default costs anything. So the cap is worth
+    keeping, but do not read it as a reason to claim more cores: past 2 or 4
+    the extra allocation does nothing for a GPU-resident model.
+
+    (An earlier note here credited the cap with a 4x prompt-eval win. That was
+    measured on a 318-token prompt, where CPU-side per-token overhead still
+    shows; at real section sizes it disappears.)
 
     sched_getaffinity is the only call that sees the cgroup, and it is
     Linux-only; macOS falls back to the machine count, which is the right answer

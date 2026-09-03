@@ -39,11 +39,20 @@ is why `_parse_ollama_reply` exists alongside `_parse_reply`. Unifying them
 re-breaks one backend or the other.
 
 **Local calls cap `num_thread` to `providers._usable_cpus()`.** llama.cpp sizes
-its pool from the physical machine, so a Slurm job holding 4 of a node's 40
-cores spawns 40 threads onto 4 and thrashes. Measured on a V100: 7.4 tok/s
-generation and 50.9 tok/s prompt eval uncapped, against 33.8 and 189.9 capped,
-with the GPU starved at a third utilization and 70W of 300W the whole time —
-fully offloaded and no throttle flag set, so it looks healthy in `ollama ps`.
+its pool from the physical machine, so a Slurm job holding 8 of a node's 40
+cores spawns 40 threads onto 8 and thrashes. The GPU looks healthy while this
+happens — fully offloaded, no throttle flag, just starved at a third
+utilization and 70W of 300W.
+
+The cap buys **generation** speed, not prompt speed. On a V100 with
+`gemma3:27b` fully offloaded, feeding a 14000-char section (2337 tokens, the
+size `max_section_chars` actually sends): prompt eval was ~10200 tok/s both
+capped and uncapped, because prefill batches onto the GPU; generation ran 33.1
+tok/s capped against 22.6 uncapped. Sweeping `num_thread` on an 8-core job,
+1 through 16 threads are flat and only the oversubscribed default costs
+anything — so **do not ask Slurm for more cores on account of this.** Two to
+four is plenty for a GPU-resident model; the earlier 4x prompt-eval figure was
+measured on a 318-token prompt and does not survive at real section sizes.
 
 ## Architecture — one engine, many configs
 
