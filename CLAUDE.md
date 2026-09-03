@@ -28,6 +28,23 @@ That service also **always streams** (`text/event-stream`) and ignores
 frames. Do not "simplify" it back to a single `json.loads` — that breaks every
 UVA call while leaving Ollama green.
 
+**Ollama is called on its native `/api/chat`, never the OpenAI-compat `/v1/`
+path.** The compat endpoint accepts an `options` object and silently discards
+it: asking `/v1/` for `num_ctx: 4096` loaded a 32768 context, while `/api/`
+asked identically loaded 4096. Every run before this was fixed ignored the
+config's `num_ctx` entirely. The two endpoints differ in request *and* reply
+shape — native puts `temperature` inside `options`, needs `stream: false`, and
+answers `{"message": {"content": ...}}` rather than `{"choices": [...]}`, which
+is why `_parse_ollama_reply` exists alongside `_parse_reply`. Unifying them
+re-breaks one backend or the other.
+
+**Local calls cap `num_thread` to `providers._usable_cpus()`.** llama.cpp sizes
+its pool from the physical machine, so a Slurm job holding 4 of a node's 40
+cores spawns 40 threads onto 4 and thrashes. Measured on a V100: 7.4 tok/s
+generation and 50.9 tok/s prompt eval uncapped, against 33.8 and 189.9 capped,
+with the GPU starved at a third utilization and 70W of 300W the whole time —
+fully offloaded and no throttle flag set, so it looks healthy in `ollama ps`.
+
 ## Architecture — one engine, many configs
 
 - `proposal_reviewer.py` — generic; knows nothing about any specific proposal.

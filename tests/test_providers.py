@@ -3,9 +3,11 @@ import sys
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import providers
 from providers import load_dotenv
 
 
@@ -118,6 +120,48 @@ def _reply(text):
     return _json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
 
+def _ollama_reply(text):
+    """Ollama's native /api/chat shape, which is not the OpenAI-compat one."""
+    return _json.dumps({"message": {"role": "assistant",
+                                    "content": text}}).encode()
+
+
+def _reply_for(url, text):
+    """Shape a fake body to whichever endpoint the client actually called, so a
+    transport shared by an Ollama slot and a remote one answers each correctly."""
+    return _ollama_reply(text) if url.endswith("/api/chat") else _reply(text)
+
+
+class TestParseOllamaReply(unittest.TestCase):
+    def test_reads_native_shape(self):
+        self.assertEqual(providers._parse_ollama_reply(_ollama_reply("hi")), "hi")
+
+    def test_rejects_empty_content(self):
+        """Silence scored as a genuine 0 with an empty justification reads as a
+        real gap in the report; a loud failure is the lesser harm."""
+        with self.assertRaises(ValueError):
+            providers._parse_ollama_reply(_ollama_reply("   "))
+
+    def test_rejects_an_openai_shaped_body(self):
+        """If the compat endpoint is ever reinstated by accident, fail loudly
+        rather than returning nothing."""
+        with self.assertRaises(ValueError):
+            providers._parse_ollama_reply(_reply("hi"))
+
+    def test_surfaces_an_ollama_error_field(self):
+        body = _json.dumps({"error": "model not found"}).encode()
+        with self.assertRaises(ValueError) as ctx:
+            providers._parse_ollama_reply(body)
+        self.assertIn("model not found", str(ctx.exception))
+
+    def test_rejects_a_stream_body(self):
+        """An unset `stream: false` yields newline-delimited JSON, not one
+        object; that must not be mistaken for a usable reply."""
+        body = (_ollama_reply("a") + b"\n" + _ollama_reply("b"))
+        with self.assertRaises(ValueError):
+            providers._parse_ollama_reply(body)
+
+
 class TestMakeChatFn(unittest.TestCase):
     CFG = {"providers": {"uva": {"kind": "openai",
                                  "base_url": "https://example.invalid/api/",
@@ -160,11 +204,103 @@ class TestMakeChatFn(unittest.TestCase):
 
         def transport(url, body, headers, timeout):
             seen.update(_json.loads(body))
-            return _reply("ok")
+            return _ollama_reply("ok")
 
         fn = make_chat_fn({}, "ollama", transport=transport, environ={})
         fn("gemma3:27b", "sys", "user", num_ctx=16384)
         self.assertEqual(seen["options"]["num_ctx"], 16384)
+
+    def test_ollama_caps_threads_to_the_allocation(self):
+        """Regression: llama.cpp sizes its pool from the physical machine, so a
+        Slurm job with a slice of a node oversubscribes cores and starves the
+        GPU. num_thread must ride along on every local call."""
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen.update(_json.loads(body))
+            return _ollama_reply("ok")
+
+        fn = make_chat_fn({}, "ollama", transport=transport, environ={})
+        fn("gemma3:27b", "sys", "user", num_ctx=16384)
+        self.assertEqual(seen["options"]["num_thread"], providers._usable_cpus())
+
+    def test_ollama_caps_threads_without_num_ctx(self):
+        """An oversubscribed pool is wrong at any context size, so the cap must
+        not be conditional on num_ctx the way num_ctx's own option is."""
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen.update(_json.loads(body))
+            return _ollama_reply("ok")
+
+        fn = make_chat_fn({}, "ollama", transport=transport, environ={})
+        fn("gemma3:27b", "sys", "user")
+        self.assertEqual(seen["options"]["num_thread"], providers._usable_cpus())
+        self.assertNotIn("num_ctx", seen["options"])
+
+    def test_ollama_posts_to_the_native_endpoint(self):
+        """Regression, and the reason the two above can pass at all: Ollama's
+        OpenAI-compat /v1/ path accepts `options` and silently discards it.
+        Asking /v1/ for num_ctx 4096 loaded a 32768 context; /api/ loaded 4096.
+        Sending to the compat path makes every option here a no-op."""
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen["url"] = url
+            return _ollama_reply("ok")
+
+        fn = make_chat_fn({}, "ollama", transport=transport, environ={})
+        fn("gemma3:27b", "sys", "user", num_ctx=16384)
+        self.assertEqual(seen["url"], "http://localhost:11434/api/chat")
+
+    def test_ollama_payload_is_native_shape(self):
+        """Native /api/chat puts sampling inside `options` and streams unless
+        told not to — a top-level temperature would simply be ignored, and an
+        unset `stream` would hand _parse_ollama_reply an SSE body."""
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen.update(_json.loads(body))
+            return _ollama_reply("ok")
+
+        fn = make_chat_fn({}, "ollama", temperature=0.6, transport=transport,
+                          environ={})
+        fn("gemma3:27b", "sys", "user", num_ctx=16384)
+        self.assertIs(seen["stream"], False)
+        self.assertEqual(seen["options"]["temperature"], 0.6)
+        self.assertNotIn("temperature", {k: v for k, v in seen.items()
+                                         if k != "options"})
+
+    def test_ollama_config_pointing_at_v1_is_redirected(self):
+        """A hand-written config may still name the compat path. Honouring it
+        would silently drop every option, so it is rewritten instead."""
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen["url"] = url
+            return _ollama_reply("ok")
+
+        cfg = {"providers": {"ollama": {
+            "kind": "ollama", "base_url": "http://localhost:11434/v1/"}}}
+        fn = make_chat_fn(cfg, "ollama", transport=transport, environ={})
+        fn("gemma3:27b", "sys", "user")
+        self.assertEqual(seen["url"], "http://localhost:11434/api/chat")
+
+    def test_usable_cpus_falls_back_when_affinity_is_unavailable(self):
+        """macOS and Windows have no sched_getaffinity; the machine count is the
+        right answer there, since nothing is partitioning cores away from us."""
+        with mock.patch.object(providers.os, "sched_getaffinity",
+                               side_effect=AttributeError, create=True), \
+             mock.patch.object(providers.os, "cpu_count", return_value=8):
+            self.assertEqual(providers._usable_cpus(), 8)
+
+    def test_usable_cpus_never_returns_zero(self):
+        """os.cpu_count() can return None; a num_thread of 0 or None would be
+        worse than the bug being fixed."""
+        with mock.patch.object(providers.os, "sched_getaffinity",
+                               side_effect=AttributeError, create=True), \
+             mock.patch.object(providers.os, "cpu_count", return_value=None):
+            self.assertEqual(providers._usable_cpus(), 1)
 
     def test_missing_key_raises_before_network(self):
         def transport(*a, **k):
@@ -334,7 +470,7 @@ class TestResolveSynthesisSlot(unittest.TestCase):
         def transport(url, body, headers, timeout):
             seen["url"] = url
             seen["auth"] = "Authorization" in headers
-            return _json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+            return _reply_for(url, "x")
 
         slots = self._slots()
         model, fn = resolve_synthesis_slot(cfg, slots,
@@ -394,7 +530,7 @@ class TestCheckProviders(unittest.TestCase):
         # Each slot is diagnosed independently: slot 0 is unresolvable, slot 1
         # is fine, and the report has to show both.
         def transport(url, body, headers, timeout):
-            return _reply("pong")
+            return _reply_for(url, "pong")
 
         rows = check_providers(self.CFG, ["uva:Kimi K2.5", "gemma3:27b"],
                                environ={}, transport=transport)

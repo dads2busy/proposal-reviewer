@@ -15,6 +15,24 @@ from pathlib import Path
 DEFAULT_ENV_PATH = Path(__file__).resolve().parent / ".env"
 
 
+def _usable_cpus():
+    """Cores this process may actually run on — not cores the machine has.
+
+    llama.cpp sizes its thread pool from the physical machine, so a Slurm job
+    holding 4 of a node's 40 cores spawns 40 threads onto 4 and thrashes. On a
+    V100 that measured 7.4 tok/s generation and 50.9 tok/s prompt eval against
+    33.8 and 189.9 with the pool capped — the GPU sat at a third utilization and
+    70W of 300W, starved rather than throttled, the whole time.
+
+    sched_getaffinity is the only call that sees the cgroup, and it is
+    Linux-only; macOS falls back to the machine count, which is the right answer
+    there because a laptop is not partitioning cores away from us."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:                     # macOS, Windows
+        return os.cpu_count() or 1
+
+
 def _harden(path):
     """chmod 600 a .env others can read, and say so on the way.
 
@@ -65,7 +83,11 @@ def load_dotenv(path=None, environ=None):
 
 
 BUILTIN_PROVIDERS = {
-    "ollama": {"kind": "ollama", "base_url": "http://localhost:11434/v1/"},
+    # Ollama's NATIVE api, not its OpenAI-compat /v1/ path. The compat endpoint
+    # accepts an `options` object and silently discards it, so num_ctx never
+    # reached the model: asking /v1/ for num_ctx 4096 loaded a 32768 context,
+    # while /api/ asked the same way loaded 4096.
+    "ollama": {"kind": "ollama", "base_url": "http://localhost:11434/api/"},
 }
 
 
@@ -173,6 +195,34 @@ def _parse_reply(raw):
     return joined
 
 
+def _parse_ollama_reply(raw):
+    """Message content from Ollama's native /api/chat response.
+
+    A different shape from the OpenAI-compat one: {"message": {"content": ...}}
+    rather than {"choices": [...]}. Kept separate from _parse_reply so the SSE
+    reassembly that UVA depends on is not touched by local-backend changes."""
+    text = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            "the body is not a single JSON object; a stream here means the "
+            "request went out without `stream: false`") from e
+    if doc.get("error"):
+        raise ValueError(f"Ollama reported an error: {doc['error']}")
+    content = (doc.get("message") or {}).get("content")
+    if content is None:
+        raise ValueError("the reply carried no message content")
+    if not isinstance(content, str):
+        raise ValueError(f"message content was "
+                         f"{type(content).__name__}, not text")
+    if not content.strip():
+        # Same reasoning as the SSE path: silence scored as a real 0 with an
+        # empty justification is worse than a loud failure.
+        raise ValueError("the reply carried empty message content")
+    return content
+
+
 def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                  environ=None, sleep=None):
     """Build a chat callable for one provider.
@@ -187,7 +237,15 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
     base = spec.get("base_url", "")
     if not base.endswith("/"):
         base += "/"
-    url = base + "chat/completions"
+    if kind == "ollama":
+        # A hand-written config may still point at the compat path; silently
+        # dropping options is exactly the failure this endpoint change fixes,
+        # so redirect rather than honour it.
+        base = re.sub(r"/v1/$", "/api/", base)
+        url = base + "chat"
+    else:
+        url = base + "chat/completions"
+    parse = _parse_ollama_reply if kind == "ollama" else _parse_reply
     host = re.sub(r"^https?://([^/]+).*$", r"\1", base)
 
     headers = {"Content-Type": "application/json"}
@@ -205,18 +263,29 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
         headers["Authorization"] = f"Bearer {key}"
 
     def chat(model, system_prompt, user_prompt, timeout=900, num_ctx=None):
-        payload = {"model": model, "temperature": temperature,
-                   "messages": [{"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_prompt}]}
-        if kind == "ollama" and num_ctx is not None:
-            payload["options"] = {"num_ctx": num_ctx}
+        messages = [{"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}]
+        if kind == "ollama":
+            # Native shape: sampling and runtime settings both live in
+            # `options`, and the endpoint streams unless told not to.
+            # num_thread rides every local call while num_ctx goes only when
+            # asked for — an oversubscribed pool is wrong at any context size.
+            options = {"temperature": temperature,
+                       "num_thread": _usable_cpus()}
+            if num_ctx is not None:
+                options["num_ctx"] = num_ctx
+            payload = {"model": model, "messages": messages,
+                       "stream": False, "options": options}
+        else:
+            payload = {"model": model, "temperature": temperature,
+                       "messages": messages}
         body = json.dumps(payload).encode()
 
         for attempt in range(MAX_HTTP_ATTEMPTS):
             try:
                 raw = transport(url, body, dict(headers), timeout)
                 try:
-                    return _parse_reply(raw)
+                    return parse(raw)
                 except ValueError as e:   # includes json.JSONDecodeError
                     excerpt = (raw[:120] if isinstance(raw, (bytes, bytearray))
                                else str(raw)[:120])
