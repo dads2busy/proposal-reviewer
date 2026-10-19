@@ -59,8 +59,11 @@ measured on a 318-token prompt and does not survive at real section sizes.
 - `proposal_reviewer.py` — generic; knows nothing about any specific proposal.
 - `configs/*.yaml` — one per funding opportunity: criteria, point caps, section map,
   keywords, model picks. **Adding a proposal = adding a config, never editing the engine.**
-- Pipeline: extract text → parse numbered sections → for each criterion ask both models
-  for points/strengths/gaps (JSON) → deterministic keyword scan → combine → render md/html/pdf.
+- Pipeline: extract text → parse numbered sections → (`--dry-run` stops here) → ping
+  both models → model A scores every criterion, then model B (points/strengths/gaps as
+  JSON) → deterministic keyword scan → synthesize top recommendations → combine →
+  render md/html/pdf. README.md's "How a review runs" flowchart draws this; it mirrors
+  the order in `main()`, so update it whenever that order changes.
 
 ## Two scoring modes (set per criterion via `section`)
 
