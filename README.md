@@ -17,6 +17,27 @@ The engine (`proposal_reviewer.py`) is proposal-agnostic. Everything specific to
 given funding opportunity — criteria, point caps, section map, keywords, model
 picks — lives in a YAML file under `configs/`. One engine, one config per proposal.
 
+## How a review runs
+
+```mermaid
+flowchart TD
+    A["Extract text<br/>(.docx / .pdf / .md / .tex / .txt)"] --> B["Parse numbered sections<br/>(trim at stop_marker)"]
+    B --> C{"--dry-run?"}
+    C -- yes --> C1["Report section mapping,<br/>truncation, keyword coverage"] --> X1(["Stop: no model calls"])
+    C -- no --> D{"Ping both models<br/>(skip with --no-check)"}
+    D -- a slot fails --> X2(["Stop: nothing reviewed"])
+    D -- both OK --> E["Model A scores every criterion"]
+    E --> F["Model B scores every criterion"]
+    F --> G["Keyword scan<br/>(deterministic regex)"]
+    G --> H["Synthesize top recommendations<br/>(falls back to a fixed ranking)"]
+    H --> I["Build combined report"]
+    I --> J["Write .md, render .html and .pdf"]
+```
+
+Each criterion sees only its own section (`section: "1.2"`) or the whole document
+(`section: "*"`), capped at `max_section_chars`. The per-model and keyword reports
+are written as each step finishes; the combined report comes last.
+
 ## Setup
 
 Two supported environments. Pick the one you are on — the engine is identical, only
