@@ -258,6 +258,15 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
         url = base + "chat/completions"
     parse = _parse_ollama_reply if kind == "ollama" else _parse_reply
     host = re.sub(r"^https?://([^/]+).*$", r"\1", base)
+    # The engine never launches Ollama itself — on a login node that would put a
+    # 24 GB model on a shared CPU — so a local miss hands over the command instead.
+    if kind != "ollama":
+        unreachable_hint = "On an HPC node?"
+    elif re.match(r"(localhost|127\.0\.0\.1)(:|$)", host):
+        unreachable_hint = ("Ollama is not running. On a GPU node, start it with: "
+                            "ollama serve > /tmp/ollama-$USER.log 2>&1 &")
+    else:
+        unreachable_hint = f"Is Ollama running on {host}?"
 
     headers = {"Content-Type": "application/json"}
     if kind == "openai":
@@ -333,7 +342,7 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
             except urllib.error.URLError as e:
                 raise ProviderError(
                     f"{provider_name}: cannot reach {host} ({e.reason}). "
-                    f"On an HPC node? Is Ollama running?") from e
+                    f"{unreachable_hint}") from e
         raise ProviderError(f"{provider_name}: exhausted retries against {host}.")
 
     return chat

@@ -344,6 +344,36 @@ class TestMakeChatFn(unittest.TestCase):
             fn("Kimi K2.5", "sys", "user")
         self.assertIn("example.invalid", str(ctx.exception))
 
+    def _unreachable(self, cfg, provider, model, environ=None):
+        def transport(url, body, headers, timeout):
+            raise urllib.error.URLError("Connection refused")
+
+        fn = make_chat_fn(cfg, provider, transport=transport,
+                          environ=environ or {}, sleep=lambda s: None)
+        with self.assertRaises(ProviderError) as ctx:
+            fn(model, "sys", "user")
+        return str(ctx.exception)
+
+    def test_unreachable_local_ollama_gives_the_command_to_start_it(self):
+        # The engine deliberately does not launch Ollama itself (it could land a
+        # 24 GB model on a shared login node), so the message carries the fix.
+        msg = self._unreachable({}, "ollama", "gemma3:27b")
+        self.assertIn("ollama serve", msg)
+        self.assertIn("/tmp/ollama-$USER.log", msg)
+
+    def test_unreachable_remote_ollama_does_not_suggest_starting_it_here(self):
+        cfg = {"providers": {"gpu": {"kind": "ollama",
+                                     "base_url": "http://gpunode:11434/api/"}}}
+        msg = self._unreachable(cfg, "gpu", "gemma3:27b")
+        self.assertIn("gpunode", msg)
+        self.assertNotIn("ollama serve", msg)
+
+    def test_unreachable_remote_api_does_not_mention_ollama(self):
+        msg = self._unreachable(self.CFG, "uva", "Kimi K2.5",
+                                environ={"TEST_KEY": "sk-test"})
+        self.assertNotIn("Ollama", msg)
+        self.assertNotIn("ollama serve", msg)
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from proposal_reviewer import resolve_chat_fns
