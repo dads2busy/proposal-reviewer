@@ -544,6 +544,87 @@ class TestCheckProviders(unittest.TestCase):
         self.assertEqual([r[0] for r in rows],
                          ["uva:Kimi K2.5 (sample 1)", "uva:Kimi K2.5 (sample 2)"])
 
+    def _timeouts(self, models):
+        seen = {}
+
+        def transport(url, body, headers, timeout):
+            seen[url] = timeout
+            return _reply_for(url, "pong")
+
+        check_providers(self.CFG, models, environ={"TEST_KEY": "sk-test"},
+                        transport=transport)
+        return seen
+
+    def test_local_slot_waits_long_enough_for_a_cold_model_load(self):
+        # The ping is the first call, so it pays for loading a 17-24 GB model
+        # off GPFS. A short timeout reports a healthy backend as down.
+        seen = self._timeouts(["gemma3:27b", "uva:Kimi K2.5"])
+        local = [t for u, t in seen.items() if u.endswith("/api/chat")]
+        remote = [t for u, t in seen.items() if not u.endswith("/api/chat")]
+        self.assertGreaterEqual(local[0], 600)
+        self.assertEqual(remote[0], 60)
+
+    def test_local_ping_loads_the_context_size_the_run_will_use(self):
+        # Pinging at Ollama's default context and then running at the config's
+        # would force a reload of the same model on the first real call.
+        bodies = []
+
+        def transport(url, body, headers, timeout):
+            bodies.append(_json.loads(body))
+            return _reply_for(url, "pong")
+
+        check_providers({"num_ctx": 8192}, ["gemma3:27b", "gemma3:27b"],
+                        transport=transport)
+        self.assertEqual(bodies[0]["options"]["num_ctx"], 8192)
+
+
+from proposal_reviewer import preflight
+
+
+class TestPreflight(unittest.TestCase):
+    """A full run pings both slots before reviewing anything. The engine runs
+    slot A over every criterion before slot B makes its first call, so without
+    this an unreachable slot B surfaces only after A's whole pass."""
+
+    CFG = TestCheckProviders.CFG
+
+    def _run(self, transport, environ=None):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            preflight(self.CFG, ["uva:Kimi K2.5", "gemma3:27b"],
+                      environ={"TEST_KEY": "sk-test"} if environ is None else environ,
+                      transport=transport)
+        return err.getvalue()
+
+    def test_returns_when_every_slot_answers(self):
+        out = self._run(lambda url, *a: _reply_for(url, "pong"))
+        self.assertIn("OK", out)
+
+    def test_exits_before_the_run_when_any_slot_fails(self):
+        def transport(url, body, headers, timeout):
+            if url.endswith("/api/chat"):
+                raise urllib.error.URLError("Connection refused")
+            return _reply("pong")
+
+        with self.assertRaises(SystemExit) as e:
+            self._run(transport)
+        self.assertNotEqual(e.exception.code, 0)
+
+    def test_failure_names_the_slot_and_the_way_out(self):
+        def transport(url, body, headers, timeout):
+            if url.endswith("/api/chat"):
+                raise urllib.error.URLError("Connection refused")
+            return _reply("pong")
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as e:
+            preflight(self.CFG, ["uva:Kimi K2.5", "gemma3:27b"],
+                      environ={"TEST_KEY": "sk-test"}, transport=transport)
+        msg = err.getvalue() + str(e.exception.code)
+        self.assertIn("FAIL", msg)
+        self.assertIn("gemma3:27b", msg)
+        self.assertIn("--no-check", msg)
+
 
 import io
 import contextlib

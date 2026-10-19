@@ -648,19 +648,44 @@ def check_providers(cfg, models, environ=None, transport=None):
     rows = []
     known = providers.known_provider_names(cfg)
     labels = slot_labels(models)
+    num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
     for label, ref in zip(labels, models):
         pname, bare = providers.split_model_ref(ref, known)
         try:
             fn = providers.make_chat_fn(cfg, pname, environ=environ,
                                         transport=transport)
+            # A local ping is the call that loads the model, which off GPFS can
+            # outlast a minute. Loading it at the run's num_ctx also spares the
+            # first real call a reload.
+            local = providers.provider_spec(cfg, pname).get("kind", "ollama") == "ollama"
             reply = fn(bare, "Reply with the single word: ok.", "ping",
-                       timeout=60)
+                       timeout=600 if local else 60,
+                       num_ctx=num_ctx if local else None)
             rows.append((label, True, f"{pname} -> {bare}: "
                                       f"{reply.strip()[:40] or '(empty reply)'}"))
         except ProviderError as e:
             rows.append((label, False, str(e)))
         except Exception as e:                # report, don't crash: this is a diagnostic
             rows.append((label, False, f"{type(e).__name__}: {e}"))
+    return rows
+
+
+def format_check_rows(rows):
+    return "\n".join(f"{'OK  ' if ok else 'FAIL'}  {label}: {detail}"
+                     for label, ok, detail in rows)
+
+
+def preflight(cfg, models, environ=None, transport=None):
+    """Ping both slots before a full run; exit if either fails.
+
+    Slot A reviews every criterion before slot B makes its first call, so an
+    unreachable B would otherwise surface only after A's entire pass."""
+    print("Checking model backends ...", file=sys.stderr)
+    rows = check_providers(cfg, models, environ=environ, transport=transport)
+    print(format_check_rows(rows), file=sys.stderr)
+    if not all(ok for _, ok, _ in rows):
+        sys.exit("A model backend failed its check, so nothing was reviewed. "
+                 "Fix it, or pass --no-check to skip this check.")
     return rows
 
 
@@ -717,6 +742,8 @@ def main():
     ap.add_argument("--outdir", default=None, metavar="DIR",
                     help="Write reports here instead of beside the proposal "
                          "(created if missing)")
+    ap.add_argument("--no-check", action="store_true",
+                    help="Skip pinging both backends before a full run")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).expanduser().read_text())
@@ -729,8 +756,7 @@ def main():
     if args.check_provider:
         providers.load_dotenv()
         rows = check_providers(cfg, models)
-        for label, ok, detail in rows:
-            print(f"{'OK  ' if ok else 'FAIL'}  {label}: {detail}")
+        print(format_check_rows(rows))
         sys.exit(0 if all(ok for _, ok, _ in rows) else 1)
 
     if not args.proposal:
@@ -749,6 +775,8 @@ def main():
     num_ctx = int(cfg.get("num_ctx", DEFAULT_NUM_CTX))
 
     providers.load_dotenv()
+    if not args.no_check:
+        preflight(cfg, models)
     # At 0.2 two samples of one model risk being near-identical, which makes the
     # second call pure cost. Sampling wider is what makes "is this score stable?"
     # a real question.

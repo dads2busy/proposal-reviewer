@@ -171,6 +171,9 @@ See `configs/uva-kimi-example.yaml` for a complete example.
     # Confirm this machine can reach and authenticate against each backend:
     python proposal_reviewer.py --config CONFIG --check-provider
 
+    # Skip the backend check a full run makes before reviewing (see below):
+    python proposal_reviewer.py PROPOSAL --config CONFIG --no-check
+
     # Collect reports somewhere else (useful when the proposal sits on a
     # read-only share, or you want a run history separate from the draft):
     python proposal_reviewer.py PROPOSAL --config CONFIG --outdir ~/reviews/spirale
@@ -179,6 +182,14 @@ See `configs/uva-kimi-example.yaml` for a complete example.
 next to the proposal file unless `--outdir DIR` says otherwise; the directory is
 created if missing, and an unusable one is rejected before any model is called
 rather than after a full run.
+
+A full run starts by pinging both models — the same check `--check-provider`
+makes — and stops if either fails. The engine reviews every criterion with the
+first model before the second makes any call, so without this an unreachable
+second backend (a stopped `ollama serve`, a node the UVA API refuses) would
+surface only after the first model's whole pass. A local model gets up to ten
+minutes to answer, since that first call is what loads it. `--dry-run` makes no
+model calls and skips the check; `--no-check` skips it on a full run.
 
 ## Running a review on HPC, step by step
 
@@ -211,8 +222,9 @@ connection kills the job.
     python proposal_reviewer.py /path/to/PROPOSAL.docx \
         --config configs/arpa-h-igor.yaml --dry-run
 
-    # 5. Confirm THIS node can reach the backend — step 4 does not test that,
-    #    and a node that cannot will fail after you have already claimed it
+    # 5. Confirm THIS node can reach the backend — step 4 does not test that.
+    #    Step 6 checks too and stops if a backend fails, but checking here
+    #    tells you before you start the long run.
     python proposal_reviewer.py --config configs/arpa-h-igor.yaml --check-provider
 
     # 6. Run it — UVA backend:
