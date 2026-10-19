@@ -88,6 +88,16 @@ measured on a 318-token prompt and does not survive at real section sizes.
 - Before any full run on a new or edited config, run `--dry-run` FIRST. It validates section
   mapping, word counts, and keyword coverage without calling models. Fix mapping there.
 - Full run: `python proposal_reviewer.py PROPOSAL --config configs/NAME.yaml`
+- A full run calls `preflight()` first: one ping per slot (the `--check-provider`
+  check) and an exit if either fails. It exists because slot A reviews every
+  criterion before slot B's first call, so a dead B otherwise surfaced only after A's
+  whole pass. `--no-check` skips it; `--dry-run` must stay model-free, so never move
+  the check ahead of it.
+- The ping timeout is 600s for Ollama slots, 60s for remote. Do not shorten the local
+  one: the ping is the call that loads a 17-24 GB model off GPFS, so a short timeout
+  reports a healthy node as down. It costs nothing when Ollama is not running —
+  connection refused returns instantly. The local ping also passes the config's
+  `num_ctx`, so the first real call doesn't reload the model at a different context.
 - Authoring a new config: see `.claude/rules/writing-configs.md`.
 
 ## Known gotchas

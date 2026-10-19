@@ -85,7 +85,9 @@ libraries — the binary finds them relative to itself. Then pull the models onc
 **Nothing starts the server for you.** The engine only calls
 `localhost:11434`; it does not launch Ollama. Start `ollama serve &` in every job,
 on the compute node, before the review — it dies with the allocation. A
-`--check-provider` against a local-Ollama config confirms it came up.
+`--check-provider` against a local-Ollama config confirms it came up; forget it and
+a full run stops at once with `Connection refused … Is Ollama running?` rather than
+reviewing anything.
 
 Tested on a V100 (`bii-gpu`, `--gres=gpu:v100:1`). Two things there look alarming
 but are fine:
