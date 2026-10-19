@@ -98,6 +98,13 @@ measured on a 318-token prompt and does not survive at real section sizes.
   reports a healthy node as down. It costs nothing when Ollama is not running —
   connection refused returns instantly. The local ping also passes the config's
   `num_ctx`, so the first real call doesn't reload the model at a different context.
+- **The engine never launches Ollama.** Auto-start was considered and rejected: run
+  before `ijob`, it would put a 24 GB model on a shared login node's CPU, and the
+  refusal is what stops that. Instead, an unreachable `localhost` Ollama fails with
+  `Ollama is not running. On a GPU node, start it with: ollama serve > /tmp/ollama-$USER.log 2>&1 &`.
+  The hint in `make_chat_fn` is per backend kind — Ollama on another host gets
+  `Is Ollama running on <host>?`, a remote API gets `On an HPC node?` — so don't
+  collapse it back into one shared message.
 - Authoring a new config: see `.claude/rules/writing-configs.md`.
 
 ## Known gotchas
