@@ -35,8 +35,9 @@ Requires Ollama >= 0.19 (MLX backend on Apple Silicon).
 
 ### B. UVA HPC (Rivanna / Afton)
 
-No Ollama here and no root needed — models come from UVA RC GenAI, and everything
-else installs into your home directory. Do this once:
+No root needed — everything installs into your home directory. Models come from
+UVA RC GenAI, from a local Ollama running on a GPU compute node, or one of each.
+Do this once:
 
     # 1. Clone
     git clone git@github.com:dads2busy/proposal-reviewer.git ~/git/proposal-reviewer
@@ -58,7 +59,7 @@ else installs into your home directory. Do this once:
     # 4. Python dependency (pdftotext is already at /usr/bin/pdftotext)
     pip install --user pyyaml
 
-    # 5. API key — see .env.example for where to get it
+    # 5. API key for UVA RC GenAI — see .env.example for where to get it
     cp .env.example .env && chmod 600 .env
 
 Then confirm the machine can authenticate:
@@ -68,6 +69,33 @@ Then confirm the machine can authenticate:
 Run this on the machine that will do the review, and rerun it whenever you move
 to a different node — reaching the API is a property of the node, not of the key
 (see [Model backends](#model-backends)).
+
+#### Local Ollama on HPC (optional)
+
+Ollama runs fine on a GPU compute node with no root. Install the Linux release
+archive (`ollama-linux-amd64`, from the
+[Ollama releases page](https://github.com/ollama/ollama/releases)) into `~/.local`
+so you end up with `~/.local/bin/ollama` and its `~/.local/lib/ollama/` CUDA
+libraries — the binary finds them relative to itself. Then pull the models once:
+
+    ollama serve &                      # needed even to pull
+    ollama pull gemma3:27b              # 17 GB
+    ollama pull qwen2.5:32b             # 24 GB — both land in ~/.ollama
+
+**Nothing starts the server for you.** The engine only calls
+`localhost:11434`; it does not launch Ollama. Start `ollama serve &` in every job,
+on the compute node, before the review — it dies with the allocation. A
+`--check-provider` against a local-Ollama config confirms it came up.
+
+Tested on a V100 (`bii-gpu`, `--gres=gpu:v100:1`). Two things there look alarming
+but are fine:
+
+- The serve log says `skipping CUDA device — compute capability not in compiled
+  architectures`. That is only the `cuda_v13` build rejecting the V100; it falls
+  back to `cuda_v12` and offloads every layer. There is no CUDA problem to fix.
+- The two models do not fit in 32 GB of VRAM together. The engine runs one model
+  over every criterion before switching, so a run pays one model swap, not one
+  per criterion.
 
 #### PDF output on HPC
 
@@ -89,6 +117,11 @@ existing configs need no changes.
 
     models: ["gemma3:27b", "qwen2.5:32b"]            # both local Ollama
     models: ["uva:Kimi K2.5", "ollama:qwen2.5:32b"]  # hybrid
+
+"Local" means the machine running the review — your laptop, or an HPC GPU node
+with `ollama serve` running (see [Local Ollama on HPC](#local-ollama-on-hpc-optional)).
+A hybrid run needs one node that reaches both, which may rule out a GPU partition
+(see below).
 
 Non-local providers are declared in the config and take their key from the
 environment — never from the file:
@@ -160,15 +193,19 @@ connection kills the job.
     tmux new -s review
 
     # 2. Inside tmux, claim a compute node. Find your allocation with `allocations`.
+    #    UVA backend — no GPU, one core:
     ijob -A <your_allocation> -p standard -c 1 -t 2:00:00
+    #    Local Ollama — a GPU node instead:
+    ijob -A <your_allocation> -p <gpu_partition> --gres=gpu:v100:1 -c 4 -t 3:00:00
 
-    # One core is enough: with a UVA backend the engine only waits on HTTP, so
-    # nothing compute-heavy runs locally. Ask for more only if you point the
-    # config at models running on the node itself.
+    # With a UVA backend the engine only waits on HTTP, so one core is enough.
+    # With local Ollama, 2-4 cores is plenty for a GPU-resident model; more buys
+    # nothing (the engine caps Ollama's threads to the cores the job holds).
 
     # 3. On the compute node, set up the shell
     module load texlive/2025
     cd ~/git/proposal-reviewer
+    ollama serve > /tmp/ollama-$USER.log 2>&1 &   # local Ollama only
 
     # 4. Validate the config against the proposal first — no model calls, seconds
     python proposal_reviewer.py /path/to/PROPOSAL.docx \
@@ -178,10 +215,14 @@ connection kills the job.
     #    and a node that cannot will fail after you have already claimed it
     python proposal_reviewer.py --config configs/arpa-h-igor.yaml --check-provider
 
-    # 6. Run it
+    # 6. Run it — UVA backend:
     python proposal_reviewer.py /path/to/PROPOSAL.docx \
         --config configs/arpa-h-igor.yaml \
         --models "uva:Kimi K2.5" "uva:Kimi K2.5"
+    #    or local Ollama, two families:
+    python proposal_reviewer.py /path/to/PROPOSAL.docx \
+        --config configs/arpa-h-igor.yaml \
+        --models gemma3:27b qwen2.5:32b
 
 Detach with `Ctrl-b d` and log out; the run continues. Reattach later with:
 
