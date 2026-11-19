@@ -120,6 +120,12 @@ but are fine:
   over every criterion before switching, so a run pays one model swap, not one
   per criterion.
 
+For a hybrid run, use the general `gpu` partition instead (`-p gpu
+--gres=gpu:1`): the UVA API has refused `bii-gpu` in every check so far (see
+[Model backends](#model-backends)). On 2026-11-19 a `gpu` job landed on an RTX
+A6000 (48 GB), where `qwen2.5:32b` fits with room to spare. `--gres=gpu:1` takes
+whatever card is free, so a smaller one may push part of the model onto the CPU.
+
 #### PDF output on HPC
 
     module load texlive/2025           # provides xelatex
@@ -143,8 +149,8 @@ existing configs need no changes.
 
 "Local" means the machine running the review — your laptop, or an HPC GPU node
 with `ollama serve` running (see [Local Ollama on HPC](#local-ollama-on-hpc-optional)).
-A hybrid run needs one node that reaches both, which may rule out a GPU partition
-(see below).
+A hybrid run needs one node that reaches both. So far the general `gpu` partition
+has and `bii-gpu` has not (see below).
 
 Non-local providers are declared in the config and take their key from the
 environment — never from the file:
@@ -168,10 +174,25 @@ tell is that the 401 is byte-identical with a valid key and with no key at all,
 and carries no `WWW-Authenticate` header — a rejected *token* would instead come
 back as JSON from Open WebUI. So when this fails, do not go editing `.env`.
 
-Which partitions are allowed is not documented here because we have not mapped
-it; treat API access as something to check per node, never assume:
+What we have observed so far:
+
+| Where | UVA API | Last checked |
+|---|---|---|
+| Login node | allowed | 2026-11-19 |
+| `standard` partition | allowed | 2026-09-02 |
+| `gpu` partition | allowed | 2026-11-19 |
+| `bii-gpu` partition | **401** | 2026-11-19 |
+| VPN-connected laptop | **401** | 2026-08-25 |
+
+This is not a published policy and may change, so check the node you are on:
 
     python proposal_reviewer.py --config CONFIG --check-provider
+
+Even from an allowed node the service sometimes drops a reply partway through or
+stalls until the read times out. The engine retries those, like a 5xx or a 429, up
+to three times with a short backoff, and prints a line to stderr for each retry so
+a recovered run is distinguishable from a clean one. A timeout against Ollama is
+not retried, since that call has already waited its full timeout.
 
 UVA hosts a single model, so a UVA-only config runs the same model twice. The
 engine detects this and relabels the combined report: two samples measure whether
@@ -231,6 +252,9 @@ connection kills the job.
     ijob -A <your_allocation> -p standard -c 1 -t 2:00:00
     #    Local Ollama — a GPU node instead:
     ijob -A <your_allocation> -p <gpu_partition> --gres=gpu:v100:1 -c 4 -t 3:00:00
+    #    Hybrid (UVA + local Ollama): use the general gpu partition,
+    #    since the UVA API has refused bii-gpu so far:
+    ijob -A <your_allocation> -p gpu --gres=gpu:1 -c 4 -t 3:00:00
 
     # With a UVA backend the engine only waits on HTTP, so one core is enough.
     # With local Ollama, 2-4 cores is plenty for a GPU-resident model; more buys

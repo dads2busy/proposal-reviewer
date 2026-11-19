@@ -375,6 +375,33 @@ class TestMakeChatFn(unittest.TestCase):
                 self.assertIn("example.invalid", msg)
                 self.assertIn(type(exc).__name__, msg)
 
+    def test_each_retry_is_reported_on_stderr(self):
+        # Without this a run that recovered looks identical to one that never
+        # failed, and a flaky backend goes unnoticed until it stops recovering.
+        import contextlib, http.client, io
+        for exc, reason in ((http.client.IncompleteRead(b""), "IncompleteRead"),
+                            (urllib.error.HTTPError("u", 503, "x", {}, None), "HTTP 503"),
+                            (urllib.error.HTTPError("u", 429, "x", {}, None), "HTTP 429")):
+            with self.subTest(reason=reason):
+                fn, calls = self._dropping(exc, fail_times=2)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    fn("Kimi K2.5", "sys", "user")
+                lines = err.getvalue().splitlines()
+                self.assertEqual(len(lines), 2)
+                self.assertIn(reason, lines[0])
+                self.assertIn("example.invalid", lines[0])
+                self.assertIn("attempt 2/3", lines[0])
+                self.assertIn("attempt 3/3", lines[1])
+
+    def test_a_clean_call_prints_nothing(self):
+        import contextlib, io
+        fn, _ = self._dropping(TimeoutError(), fail_times=0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            fn("Kimi K2.5", "sys", "user")
+        self.assertEqual(err.getvalue(), "")
+
     def test_local_timeout_is_not_retried(self):
         # A local call already waits up to 900s (600s for the ping); a timeout
         # there means Ollama is stuck, and three waits would only triple it.

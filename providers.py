@@ -310,6 +310,15 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                        "messages": messages}
         body = json.dumps(payload).encode()
 
+        def backoff(attempt, reason):
+            # Say so on every retry: a run that recovered otherwise looks the
+            # same as one that never failed, and a flaky backend goes unseen.
+            wait = 2 ** attempt
+            print(f"  {provider_name}: {reason} from {host}; retrying in "
+                  f"{wait}s (attempt {attempt + 2}/{MAX_HTTP_ATTEMPTS})",
+                  file=sys.stderr)
+            sleep(wait)
+
         for attempt in range(MAX_HTTP_ATTEMPTS):
             try:
                 raw = transport(url, body, dict(headers), timeout)
@@ -337,14 +346,14 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                         f"HPC node: this API returns 401 from a VPN-connected "
                         f"laptop even with a valid key.") from e
                 if e.code == 429 and attempt < MAX_HTTP_ATTEMPTS - 1:
-                    sleep(2 ** attempt)
+                    backoff(attempt, f"HTTP {e.code}")
                     continue
                 if e.code == 429:
                     raise ProviderError(
                         f"{provider_name}: rate limited by {host} after "
                         f"{MAX_HTTP_ATTEMPTS} attempts (HTTP 429).") from e
                 if e.code >= 500 and attempt < MAX_HTTP_ATTEMPTS - 1:
-                    sleep(2 ** attempt)
+                    backoff(attempt, f"HTTP {e.code}")
                     continue
                 raise ProviderError(
                     f"{provider_name}: {host} returned HTTP {e.code}.") from e
@@ -359,7 +368,7 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                         f"{timeout}s (TimeoutError). Check the Ollama log; "
                         f"the server may be stuck.") from e
                 if attempt < MAX_HTTP_ATTEMPTS - 1:
-                    sleep(2 ** attempt)
+                    backoff(attempt, type(e).__name__)
                     continue
                 raise ProviderError(
                     f"{provider_name}: {host} dropped the reply "
