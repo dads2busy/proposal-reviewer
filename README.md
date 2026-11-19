@@ -244,7 +244,8 @@ run it under tmux on a compute node.
 **Order matters: tmux on the login node, `ijob` inside it.** Reversed, a dropped
 connection kills the job.
 
-    # 1. On the login node, start a named tmux session
+    # 1. On the login node, note its name, then start a named tmux session
+    hostname                            # e.g. udc-ba38-32c0; you need it to reattach
     tmux new -s review
 
     # 2. Inside tmux, claim a compute node. Find your allocation with `allocations`.
@@ -285,6 +286,14 @@ connection kills the job.
 
 Detach with `Ctrl-b d` and log out; the run continues. Reattach later with:
 
+    tmux attach -t review
+
+The session lives on the login node where you started it, and
+`login.hpc.virginia.edu` may put you on a different one when you reconnect. If
+`tmux attach` reports no session, hop to the node you noted in step 1 and attach
+there:
+
+    ssh udc-ba38-32c0                   # the hostname from step 1
     tmux attach -t review
 
 Check on it without attaching using `squeue -u $USER` to confirm the job is alive.
