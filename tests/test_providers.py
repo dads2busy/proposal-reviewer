@@ -334,6 +334,78 @@ class TestMakeChatFn(unittest.TestCase):
         self.assertEqual(fn("Kimi K2.5", "sys", "user"), "finally")
         self.assertEqual(len(calls), 3)
 
+    def _dropping(self, exc, fail_times):
+        """A transport that fails `fail_times` times with `exc`, then answers."""
+        calls = []
+
+        def transport(url, body, headers, timeout):
+            calls.append(1)
+            if len(calls) <= fail_times:
+                raise exc
+            return _reply("recovered")
+
+        fn = make_chat_fn(self.CFG, "uva", transport=transport,
+                          environ={"TEST_KEY": "sk-test"}, sleep=lambda s: None)
+        return fn, calls
+
+    def test_dropped_reads_are_retried(self):
+        # UVA's service sometimes opens the connection and then drops or stalls
+        # the reply; seen on 2026-11-19 as both of these from HPC nodes. One
+        # blip must not end a 30-call review.
+        import http.client
+        for exc in (http.client.IncompleteRead(b""),
+                    TimeoutError("The read operation timed out"),
+                    ConnectionResetError("reset by peer")):
+            with self.subTest(exc=type(exc).__name__):
+                fn, calls = self._dropping(exc, fail_times=2)
+                self.assertEqual(fn("Kimi K2.5", "sys", "user"), "recovered")
+                self.assertEqual(len(calls), 3)
+
+    def test_persistent_dropped_reads_become_a_provider_error(self):
+        # main() exits cleanly only on ProviderError; anything else is a traceback.
+        import http.client
+        for exc in (http.client.IncompleteRead(b""),
+                    TimeoutError("The read operation timed out")):
+            with self.subTest(exc=type(exc).__name__):
+                fn, calls = self._dropping(exc, fail_times=99)
+                with self.assertRaises(ProviderError) as ctx:
+                    fn("Kimi K2.5", "sys", "user")
+                self.assertEqual(len(calls), providers.MAX_HTTP_ATTEMPTS)
+                msg = str(ctx.exception)
+                self.assertIn("example.invalid", msg)
+                self.assertIn(type(exc).__name__, msg)
+
+    def test_local_timeout_is_not_retried(self):
+        # A local call already waits up to 900s (600s for the ping); a timeout
+        # there means Ollama is stuck, and three waits would only triple it.
+        calls = []
+
+        def transport(url, body, headers, timeout):
+            calls.append(1)
+            raise TimeoutError("timed out")
+
+        fn = make_chat_fn({}, "ollama", transport=transport,
+                          environ={}, sleep=lambda s: None)
+        with self.assertRaises(ProviderError) as ctx:
+            fn("gemma3:27b", "sys", "user")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("TimeoutError", str(ctx.exception))
+
+    def test_local_dropped_read_is_still_retried(self):
+        import http.client
+        calls = []
+
+        def transport(url, body, headers, timeout):
+            calls.append(1)
+            if len(calls) < 2:
+                raise http.client.IncompleteRead(b"")
+            return _reply_for(url, "recovered")
+
+        fn = make_chat_fn({}, "ollama", transport=transport,
+                          environ={}, sleep=lambda s: None)
+        self.assertEqual(fn("gemma3:27b", "sys", "user"), "recovered")
+        self.assertEqual(len(calls), 2)
+
     def test_connection_error_names_the_host(self):
         def transport(url, body, headers, timeout):
             raise urllib.error.URLError("refused")

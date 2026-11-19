@@ -3,6 +3,7 @@
 Resolves "provider:model" strings to a chat callable, and loads secrets from
 .env. Kept separate from the engine so the eventual web service can reuse it.
 """
+import http.client
 import json
 import os
 import re
@@ -142,6 +143,14 @@ def provider_spec(cfg, name):
 
 
 MAX_HTTP_ATTEMPTS = 3
+
+# A connection that opens and then fails mid-reply. urllib wraps errors raised
+# while connecting in URLError, but not these, which arrive during the read.
+# UVA's service produced the first two from HPC nodes on 2026-11-19. They are
+# transient, so they get the same retry as a 5xx. A timeout against local
+# Ollama is the exception: the call already waited its full timeout, and a
+# local server that slow is stuck, so a retry would only multiply the wait.
+_DROPPED_READ = (http.client.IncompleteRead, TimeoutError, ConnectionError)
 
 
 def _urllib_transport(url, body, headers, timeout):
@@ -343,6 +352,19 @@ def make_chat_fn(cfg, provider_name, temperature=0.2, transport=None,
                 raise ProviderError(
                     f"{provider_name}: cannot reach {host} ({e.reason}). "
                     f"{unreachable_hint}") from e
+            except _DROPPED_READ as e:
+                if kind == "ollama" and isinstance(e, TimeoutError):
+                    raise ProviderError(
+                        f"{provider_name}: {host} did not answer within "
+                        f"{timeout}s (TimeoutError). Check the Ollama log; "
+                        f"the server may be stuck.") from e
+                if attempt < MAX_HTTP_ATTEMPTS - 1:
+                    sleep(2 ** attempt)
+                    continue
+                raise ProviderError(
+                    f"{provider_name}: {host} dropped the reply "
+                    f"{MAX_HTTP_ATTEMPTS} times in a row "
+                    f"({type(e).__name__}: {e}).") from e
         raise ProviderError(f"{provider_name}: exhausted retries against {host}.")
 
     return chat
